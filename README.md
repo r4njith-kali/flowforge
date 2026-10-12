@@ -103,9 +103,13 @@ Create request fields are `jobType` (required, 1–200 characters), `payload`
 (required JSON object), optional `scheduledAt`, `maxAttempts` (default 5,
 range 1–100), and `retryDelaySeconds` (default 0, range 0–86400). A future
 `scheduledAt` creates a `SCHEDULED` job; an immediate or past schedule creates
-a `PENDING` job. Cancellation is idempotent for already-cancelled jobs and
-returns `409 Conflict` for other ineligible states. State changes use
-optimistic locking.
+a `PENDING` job. The optional `Idempotency-Key` header makes repeated
+equivalent submissions return the original job; using the same key with
+different content returns `409 Conflict`. Keys are scoped to
+`POST:/api/v1/jobs` and retained for 24 hours. This API is currently
+single-tenant: tenant scoping must be added before multi-tenant deployment.
+Cancellation is idempotent for already-cancelled jobs and returns `409
+Conflict` for other ineligible states. State changes use optimistic locking.
 
 List parameters include `status`, exact `jobType`, zero-based `page` (default
 0), `size` (default 20, maximum 100), `sortBy` (`createdAt`, `updatedAt`,
@@ -113,6 +117,16 @@ List parameters include `status`, exact `jobType`, zero-based `page` (default
 Errors use RFC-style Problem Details with a stable `code`; validation errors
 also include field-level details.
 
-Kafka publication/consumers, retries at runtime, request idempotency, workflow
-definitions, authentication, Redis, monitoring, and the web console are future
-work; persisted retry settings are not yet acted on by a worker.
+Job creation and its `JobCreated` event are recorded atomically in PostgreSQL
+using the transactional outbox. The outbox includes retry and lease metadata
+and is designed for concurrent publishers using row claiming with
+`FOR UPDATE SKIP LOCKED`. No publisher, Kafka integration, or event delivery
+is implemented yet. When delivery is added, it will be at least once;
+consumers must be idempotent. This does not guarantee exactly-once execution
+or exactly-once external side effects. Idempotency records expire after 24
+hours; expired keys may be reused, and a scheduled cleanup removes expired
+records hourly.
+
+Kafka publication/consumers, retries at runtime, workflow definitions,
+authentication, Redis, monitoring, and the web console are future work;
+persisted retry settings are not yet acted on by a worker.

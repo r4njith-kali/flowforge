@@ -191,9 +191,9 @@ The initial job API is single-tenant: the first migration omits tenant and
 workflow foreign keys because authentication and workflow definitions are
 not yet implemented. The schema above is the target model; tenant scoping and
 workflow references must be introduced through migrations before those
-features are exposed. Attempt, result/error, event, idempotency, and outbox
-tables are likewise future additive migrations; the current `jobs` table
-contains the core persisted fields required by the first REST API.
+features are exposed. The current schema has additive Flyway migrations for
+jobs, operation/key-scoped idempotency records, and outbox events. Attempts,
+job history, and workflow tables remain future additive migrations.
 
 ## 6. API contracts
 
@@ -220,15 +220,27 @@ The current create request accepts `jobType`, JSON-object `payload`, optional
 `scheduledAt`, `maxAttempts` (default 5, 1–100), and `retryDelaySeconds`
 (default 0, 0–86400). It returns `201 Created`, a `Location` header, and a job
 DTO. Future schedule times produce `SCHEDULED`; absent or past times produce
-`PENDING`. Listing supports optional status and exact job type filters,
-zero-based `page`, bounded `size` (1–100), an allowlisted `sortBy`, and
-`ASC`/`DESC` direction. Cancelling `PENDING` or `SCHEDULED` transitions it
-immediately to `CANCELLED`; repeated cancellation of an already-cancelled job
-is idempotent. Other ineligible states return `409 Conflict`. Unknown jobs
-return `404`; malformed input and unsupported sorting return `400`.
+`PENDING`. An optional `Idempotency-Key` header, limited to 255 non-blank
+characters, makes repeated equivalent submissions return the original job.
+The key is scoped to `POST:/api/v1/jobs`; mismatched request content returns
+`409 Conflict`. Records are retained for 24 hours and may then be reused.
+Expired records are cleaned hourly. The current API is single-tenant, so
+tenant scoping must be added before multi-tenant deployment.
 
-Request idempotency and workflow-linked submission remain planned work; no
-Kafka dispatch is performed when creating a job in this milestone.
+Listing supports optional status and exact job type filters, zero-based
+`page`, bounded `size` (1–100), an allowlisted `sortBy`, and `ASC`/`DESC`
+direction. Cancelling `PENDING` or `SCHEDULED` transitions it immediately to
+`CANCELLED`; repeated cancellation of an already-cancelled job is idempotent.
+Other ineligible states return `409 Conflict`. Unknown jobs return `404`;
+malformed input and unsupported sorting return `400`.
+
+Each successful job submission and its `JobCreated` JSONB outbox event are
+persisted atomically. The outbox schema includes claim lease and retry fields;
+the future publisher can coordinate instances with `FOR UPDATE SKIP LOCKED`.
+No event is published in this milestone: there is no Kafka producer or
+publisher. Event delivery, once implemented, must be treated as at least once,
+and downstream consumers must be idempotent. Exactly-once distributed
+execution is not guaranteed.
 
 ### Planned event envelopes
 
@@ -324,8 +336,10 @@ updated progress documentation, and a Conventional Commit.
    PostgreSQL Compose configuration, Flyway-managed jobs schema, JPA entity
    and repository, job lifecycle, REST DTOs/endpoints, validation, Problem
    Details, OpenAPI, and PostgreSQL Testcontainers coverage.
-3. **Idempotent submission and outbox:** request idempotency, transactional
-   outbox, event schemas, publisher, duplicate/restart integration tests.
+3. **Idempotent submission and outbox (complete):** operation-scoped request
+   idempotency with defined retention, transactional `JobCreated` outbox,
+   database-safe concurrent submission, and PostgreSQL integration tests.
+   Actual publisher/Kafka delivery remains in milestone 4.
 4. **Scheduling and Kafka dispatch:** due-work claiming, backpressure,
    partition strategy, retry scheduling, dead-letter handling and metrics.
 5. **Worker runtime and recovery:** handler contract, attempt/lease fencing,

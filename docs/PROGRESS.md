@@ -6,7 +6,7 @@ Last updated: 2026-10-13
 | --- | --- | --- |
 | 1. Architecture and project foundation | Complete | Java 21 Maven reactor and health endpoint committed; tested with Java 25 using `--release 21`. |
 | 2. PostgreSQL persistence and job management REST API | Complete | `mvn -B -ntp clean verify`: 23 tests passed, 0 failed/errors; includes PostgreSQL 16 Testcontainers migration and REST integration tests. Compose config validated. |
-| 3. Idempotent submission and outbox | Not started | Add tenant-scoped request idempotency and transactional event outbox; verify duplicate requests and restart-safe publication. |
+| 3. Idempotent submission and outbox | Complete | Optional operation-scoped idempotency with 24-hour retention; transactional `JobCreated` outbox; PostgreSQL integration coverage. No publisher/Kafka delivery is implemented yet. |
 | 4. Scheduling and Kafka dispatch | Not started | Add due-job claiming, dispatch, backpressure, retry scheduling, and dead-letter handling. |
 | 5. Worker runtime and recovery | Not started | Add worker handlers, attempt leases, heartbeat, cancellation, and crash recovery. |
 | 6. Operator UI | Not started | Add React/TypeScript console and typed API client with accessibility and UI tests. |
@@ -25,9 +25,29 @@ Last updated: 2026-10-13
   safe sorting, optimistic state updates, and springdoc OpenAPI.
 - JUnit 5 unit/MVC tests and PostgreSQL Testcontainers integration coverage.
 
+## Delivered in milestone 3
+
+- Flyway V2 adds operation/key-scoped idempotency records and constrained
+  outbox events with JSONB payload, retry state, and publisher claim leases.
+- Optional `Idempotency-Key` on job creation. Canonical request fingerprints
+  distinguish equivalent retries from conflicting reuse (`409 Conflict`).
+  PostgreSQL transaction-scoped advisory locks serialize concurrent requests
+  for the same operation/key across application instances; the primary key is
+  the final uniqueness guard.
+- Job, idempotency record, and `JobCreated` outbox event are stored in the same
+  PostgreSQL transaction. A database-backed claim design supports future
+  concurrent publishers using `FOR UPDATE SKIP LOCKED`.
+- Idempotency keys are retained for 24 hours; expired keys may be reused, and
+  an hourly scheduled cleanup removes expired records. Keys are scoped to
+  `POST:/api/v1/jobs`, not to a tenant. Add tenant scoping before enabling
+  multi-tenant use.
+- No Kafka producer or publisher is implemented. Future outbox delivery is
+  at least once, so consumers and external side effects must be idempotent;
+  exactly-once distributed execution is not promised.
+
 ## Explicitly not delivered
 
 Kafka publication/consumers, worker execution, retries at runtime, request
-idempotency, workflow definitions, multi-tenant authentication, Redis,
-Prometheus/Grafana, and the web console remain future milestones. Job retry
-settings are persisted but are not yet acted on by a worker.
+workflow definitions, multi-tenant authentication, Redis, Prometheus/Grafana,
+and the web console remain future milestones. Job retry settings are persisted
+but are not yet acted on by a worker.

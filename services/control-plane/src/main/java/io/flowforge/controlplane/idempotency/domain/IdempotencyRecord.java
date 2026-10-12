@@ -12,6 +12,7 @@ import java.io.Serializable;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
+import io.flowforge.controlplane.security.JobOwner;
 
 @Entity
 @Table(name = "idempotency_records")
@@ -39,12 +40,13 @@ public class IdempotencyRecord {
     public static IdempotencyRecord create(
             String operationName,
             String key,
+            JobOwner owner,
             String requestFingerprint,
             UUID jobId,
             Instant createdAt,
             Instant expiresAt) {
         IdempotencyRecord record = new IdempotencyRecord();
-        record.id = new Id(operationName, key);
+        record.id = new Id(operationName, owner.issuer(), owner.subject(), key);
         record.requestFingerprint = requestFingerprint;
         record.jobId = jobId;
         record.createdAt = createdAt;
@@ -78,14 +80,22 @@ public class IdempotencyRecord {
         @Column(name = "operation_name", nullable = false, length = 100)
         private String operationName;
 
+        @Column(name = "principal_issuer", nullable = false, length = 512)
+        private String issuer;
+
+        @Column(name = "principal_subject", nullable = false, length = 255)
+        private String subject;
+
         @Column(name = "idempotency_key", nullable = false, length = 255)
         private String key;
 
         protected Id() {
         }
 
-        public Id(String operationName, String key) {
+        public Id(String operationName, String issuer, String subject, String key) {
             this.operationName = operationName;
+            this.issuer = issuer;
+            this.subject = subject;
             this.key = key;
         }
 
@@ -97,6 +107,14 @@ public class IdempotencyRecord {
             return key;
         }
 
+        public String getIssuer() {
+            return issuer;
+        }
+
+        public String getSubject() {
+            return subject;
+        }
+
         @Override
         public boolean equals(Object other) {
             if (this == other) {
@@ -106,12 +124,14 @@ public class IdempotencyRecord {
                 return false;
             }
             return Objects.equals(operationName, that.operationName)
+                    && Objects.equals(issuer, that.issuer)
+                    && Objects.equals(subject, that.subject)
                     && Objects.equals(key, that.key);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(operationName, key);
+            return Objects.hash(operationName, issuer, subject, key);
         }
     }
 }

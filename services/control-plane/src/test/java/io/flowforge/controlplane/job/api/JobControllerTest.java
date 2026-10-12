@@ -8,9 +8,12 @@ import io.flowforge.controlplane.job.domain.JobStatus;
 import io.flowforge.controlplane.job.service.JobSubmissionResult;
 import io.flowforge.controlplane.job.service.JobSubmissionService;
 import io.flowforge.controlplane.job.service.JobService;
+import io.flowforge.controlplane.security.JobOwner;
+import io.flowforge.controlplane.security.WithMockJwt;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -36,10 +39,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(JobController.class)
+@AutoConfigureMockMvc(addFilters = false)
 @Import(ApiExceptionHandler.class)
+@WithMockJwt
 class JobControllerTest {
 
     private static final Instant NOW = Instant.parse("2026-10-12T12:00:00Z");
+    private static final JobOwner OWNER =
+            new JobOwner("https://identity.flowforge.test/realms/flowforge", "operator-1");
 
     @Autowired
     private MockMvc mockMvc;
@@ -55,7 +62,8 @@ class JobControllerTest {
         Job job = newJob();
         when(jobSubmissionService.submit(
                 any(),
-                eq(null))).thenReturn(new JobSubmissionResult(job, false));
+                eq(null),
+                eq(OWNER))).thenReturn(new JobSubmissionResult(job, false));
 
         mockMvc.perform(post("/api/v1/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -104,7 +112,12 @@ class JobControllerTest {
     @Test
     void listSupportsSafeSortingAndStatusFiltering() throws Exception {
         Job job = newJob();
-        when(jobService.list(eq(JobStatus.PENDING), eq("email.send"), any(Pageable.class)))
+        when(jobService.list(
+                eq(JobStatus.PENDING),
+                eq("email.send"),
+                any(Pageable.class),
+                eq(OWNER),
+                eq(false)))
                 .thenReturn(new PageImpl<>(
                         List.of(job),
                         PageRequest.of(1, 5, Sort.by(Sort.Direction.ASC, "jobType")),
@@ -128,7 +141,9 @@ class JobControllerTest {
         verify(jobService).list(
                 eq(JobStatus.PENDING),
                 eq("email.send"),
-                eq(PageRequest.of(1, 5, Sort.by(Sort.Direction.ASC, "jobType"))));
+                eq(PageRequest.of(1, 5, Sort.by(Sort.Direction.ASC, "jobType"))),
+                eq(OWNER),
+                eq(false));
     }
 
     @Test
@@ -148,7 +163,7 @@ class JobControllerTest {
     @Test
     void getReturnsNotFoundAsProblemDetail() throws Exception {
         UUID id = UUID.randomUUID();
-        when(jobService.get(id)).thenThrow(new JobNotFoundException(id));
+        when(jobService.get(id, OWNER, false)).thenThrow(new JobNotFoundException(id));
 
         mockMvc.perform(get("/api/v1/jobs/{id}", id))
                 .andExpect(status().isNotFound())
@@ -159,7 +174,8 @@ class JobControllerTest {
     @Test
     void cancelReturnsConflictForIneligibleState() throws Exception {
         UUID id = UUID.randomUUID();
-        when(jobService.cancel(id)).thenThrow(new InvalidJobStateException("Cannot cancel"));
+        when(jobService.cancel(id, OWNER, false))
+                .thenThrow(new InvalidJobStateException("Cannot cancel"));
 
         mockMvc.perform(post("/api/v1/jobs/{id}/cancel", id))
                 .andExpect(status().isConflict())

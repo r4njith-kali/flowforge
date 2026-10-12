@@ -3,6 +3,7 @@ package io.flowforge.controlplane.outbox;
 import io.flowforge.controlplane.job.api.CreateJobRequest;
 import io.flowforge.controlplane.job.domain.JobStatus;
 import io.flowforge.controlplane.job.service.JobSubmissionService;
+import io.flowforge.controlplane.security.JobOwner;
 import io.flowforge.controlplane.outbox.service.OutboxPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ import static org.mockito.Mockito.when;
 class OutboxRetryIntegrationTest {
 
     private static final String TOPIC = "flowforge.job-dispatch.v1";
+    private static final JobOwner SYSTEM_OWNER = new JobOwner("https://issuer.test", "system");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -124,7 +126,8 @@ class OutboxRetryIntegrationTest {
     private UUID createJob() {
         return jobSubmissionService.submit(
                 new CreateJobRequest("email.send", Map.of(), null, 2, 0),
-                null).job().getId();
+                null,
+                SYSTEM_OWNER).job().getId();
     }
 
     private String jobStatus(UUID id) {

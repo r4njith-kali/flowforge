@@ -1,4 +1,10 @@
 spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${FLOWFORGE_OIDC_ISSUER_URI:http://localhost:8180/realms/flowforge}
+          jwk-set-uri: ${FLOWFORGE_OIDC_JWK_SET_URI:http://localhost:8180/realms/flowforge/protocol/openid-connect/certs}
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/flowforge}
     username: ${DB_USERNAME:}
@@ -32,6 +38,11 @@ management:
         enabled: true
 
 flowforge:
+  security:
+    audience: ${FLOWFORGE_OIDC_AUDIENCE:flowforge-api}
+    cors:
+      allowed-origin: ${FLOWFORGE_CORS_ALLOWED_ORIGIN:http://localhost:5173}
+
   idempotency:
     retention: PT24H
     cleanup-interval-ms: 3600000

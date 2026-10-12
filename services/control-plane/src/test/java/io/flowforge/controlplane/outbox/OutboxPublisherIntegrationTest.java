@@ -6,6 +6,7 @@ import io.flowforge.controlplane.job.api.CreateJobRequest;
 import io.flowforge.controlplane.job.domain.JobStatus;
 import io.flowforge.controlplane.job.service.JobSubmissionService;
 import io.flowforge.controlplane.job.service.JobService;
+import io.flowforge.controlplane.security.JobOwner;
 import io.flowforge.controlplane.outbox.domain.ClaimedOutboxEvent;
 import io.flowforge.controlplane.outbox.domain.JobEventEnvelope;
 import io.flowforge.controlplane.outbox.persistence.OutboxStore;
@@ -51,6 +52,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class OutboxPublisherIntegrationTest {
 
     private static final String TOPIC = "flowforge.job-dispatch.v1";
+    private static final JobOwner SYSTEM_OWNER = new JobOwner("https://issuer.test", "system");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
@@ -140,7 +142,7 @@ class OutboxPublisherIntegrationTest {
     void cancellationBeforeDispatchSuppressesOutboxPublication() throws Exception {
         UUID jobId = createJob("email.send", null);
 
-        jobService.cancel(jobId);
+        jobService.cancel(jobId, SYSTEM_OWNER, true);
 
         assertThat(publisher.publishBatch()).isZero();
         assertThat(readRecordsForJob(jobId, 1)).isEmpty();
@@ -159,7 +161,7 @@ class OutboxPublisherIntegrationTest {
         assertThat(claimed).hasSize(1);
         assertThat(jobStatus(jobId)).isEqualTo(JobStatus.DISPATCHING.name());
 
-        jobService.cancel(jobId);
+        jobService.cancel(jobId, SYSTEM_OWNER, true);
 
         assertThat(outboxStore.isClaimPublishable(claimed.getFirst().id(), publisherId)).isFalse();
         assertThat(publisher.publishBatch()).isZero();
@@ -264,7 +266,8 @@ class OutboxPublisherIntegrationTest {
     private UUID createJob(String jobType, Instant scheduledAt) {
         return jobSubmissionService.submit(
                 new CreateJobRequest(jobType, Map.of("sample", true), scheduledAt, 3, 0),
-                null).job().getId();
+                null,
+                SYSTEM_OWNER).job().getId();
     }
 
     private String jobStatus(UUID id) {

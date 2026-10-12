@@ -13,6 +13,7 @@ import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
+import io.flowforge.controlplane.security.JobOwner;
 
 @Entity
 @Table(name = "jobs")
@@ -61,6 +62,12 @@ public class Job {
     @Column(name = "retry_delay_seconds", nullable = false)
     private int retryDelaySeconds;
 
+    @Column(name = "owner_issuer", length = 512)
+    private String ownerIssuer;
+
+    @Column(name = "owner_subject", length = 255)
+    private String ownerSubject;
+
     @Version
     @Column(nullable = false)
     private long version;
@@ -75,6 +82,17 @@ public class Job {
             int maxAttempts,
             int retryDelaySeconds,
             Instant now) {
+        return create(jobType, payload, scheduledAt, maxAttempts, retryDelaySeconds, now, null);
+    }
+
+    public static Job create(
+            String jobType,
+            Map<String, Object> payload,
+            Instant scheduledAt,
+            int maxAttempts,
+            int retryDelaySeconds,
+            Instant now,
+            JobOwner owner) {
         Job job = new Job();
         job.id = UUID.randomUUID();
         job.jobType = jobType;
@@ -88,6 +106,10 @@ public class Job {
         job.attemptCount = 0;
         job.maxAttempts = maxAttempts;
         job.retryDelaySeconds = retryDelaySeconds;
+        if (owner != null) {
+            job.ownerIssuer = owner.issuer();
+            job.ownerSubject = owner.subject();
+        }
         return job;
     }
 
@@ -176,5 +198,13 @@ public class Job {
 
     public long getVersion() {
         return version;
+    }
+
+    public String getOwnerIssuer() {
+        return ownerIssuer;
+    }
+
+    public String getOwnerSubject() {
+        return ownerSubject;
     }
 }

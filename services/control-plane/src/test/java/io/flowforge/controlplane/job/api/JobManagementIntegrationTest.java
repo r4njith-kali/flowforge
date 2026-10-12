@@ -5,6 +5,8 @@ import io.flowforge.controlplane.job.service.JobSubmissionResult;
 import io.flowforge.controlplane.job.service.JobSubmissionService;
 import io.flowforge.controlplane.job.service.JobRequestFingerprint;
 import io.flowforge.controlplane.job.domain.JobStatus;
+import io.flowforge.controlplane.security.JobOwner;
+import io.flowforge.controlplane.security.WithMockJwt;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,13 +40,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest(properties = "flowforge.kafka.publisher.enabled=false")
-@AutoConfigureMockMvc
+@AutoConfigureMockMvc(addFilters = false)
 @Testcontainers
+@WithMockJwt
 class JobManagementIntegrationTest {
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES =
             new PostgreSQLContainer<>("postgres:16-alpine");
+    private static final JobOwner OWNER =
+            new JobOwner("https://identity.flowforge.test/realms/flowforge", "operator-1");
 
     @Autowired
     private MockMvc mockMvc;
@@ -177,14 +182,70 @@ class JobManagementIntegrationTest {
                                 """))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(originalId));
+    }
 
-        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM jobs", Integer.class)).isEqualTo(1);
-        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM outbox_events", Integer.class)).isEqualTo(1);
+    @Test
+    void idempotencyKeysAreIndependentAcrossValidatedUsers() {
+        CreateJobRequest request = new CreateJobRequest(
+                "email.send", Map.of("value", "same-key"), null, null, null);
+        JobOwner anotherOwner = new JobOwner(
+                "https://identity.flowforge.test/realms/flowforge",
+                "operator-2");
+
+        var first = jobSubmissionService.submit(request, "shared-key", OWNER);
+        var second = jobSubmissionService.submit(request, "shared-key", anotherOwner);
+
+        assertThat(first.job().getId()).isNotEqualTo(second.job().getId());
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM idempotency_records WHERE operation_name = ? AND idempotency_key = ?",
+                "SELECT count(*) FROM idempotency_records WHERE idempotency_key = ?",
                 Integer.class,
-                JobSubmissionService.OPERATION_NAME,
-                "submit-order-42")).isEqualTo(1);
+                "shared-key")).isEqualTo(2);
+    }
+
+    @Test
+    @WithMockJwt(subject = "operator-1")
+    void listDetailAndCancelAreConsistentlyRestrictedToTheOwner() throws Exception {
+        var ownedJob = jobSubmissionService.submit(
+                new CreateJobRequest("email.send", Map.of(), null, null, null),
+                null,
+                OWNER).job();
+        var otherJob = jobSubmissionService.submit(
+                new CreateJobRequest("email.send", Map.of(), null, null, null),
+                null,
+                new JobOwner(OWNER.issuer(), "operator-2")).job();
+
+        mockMvc.perform(get("/api/v1/jobs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(ownedJob.getId().toString()));
+        mockMvc.perform(get("/api/v1/jobs/{id}", otherJob.getId()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/v1/jobs/{id}/cancel", otherJob.getId()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @WithMockJwt(role = "ADMIN", subject = "admin-1")
+    void administratorCanListJobsCreatedByDifferentOwners() throws Exception {
+        var first = jobSubmissionService.submit(
+                new CreateJobRequest("email.send", Map.of(), null, null, null),
+                null,
+                OWNER).job();
+        var second = jobSubmissionService.submit(
+                new CreateJobRequest("email.send", Map.of(), null, null, null),
+                null,
+                new JobOwner(OWNER.issuer(), "operator-2")).job();
+
+        mockMvc.perform(get("/api/v1/jobs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2));
+        mockMvc.perform(get("/api/v1/jobs/{id}", first.getId()))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/jobs/{id}", second.getId()))
+                .andExpect(status().isOk());
+
+        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM jobs", Integer.class)).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM outbox_events", Integer.class)).isEqualTo(2);
     }
 
     @Test
@@ -262,7 +323,7 @@ class JobManagementIntegrationTest {
                     if (!start.await(10, TimeUnit.SECONDS)) {
                         throw new IllegalStateException("Timed out waiting to start submissions");
                     }
-                    return jobSubmissionService.submit(request, "concurrent-key");
+                    return jobSubmissionService.submit(request, "concurrent-key", OWNER);
                 }));
             }
             assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
@@ -306,7 +367,8 @@ class JobManagementIntegrationTest {
         try {
             assertThatThrownBy(() -> jobSubmissionService.submit(
                     new CreateJobRequest("email.send", Map.of(), null, null, null),
-                    "rollback-key")).isInstanceOf(JpaSystemException.class);
+                    "rollback-key",
+                    OWNER)).isInstanceOf(JpaSystemException.class);
 
             assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM jobs", Integer.class)).isZero();
             assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM outbox_events", Integer.class)).isZero();

@@ -7,6 +7,7 @@ import io.flowforge.controlplane.job.api.CreateJobRequest;
 import io.flowforge.controlplane.job.domain.Job;
 import io.flowforge.controlplane.outbox.domain.OutboxEvent;
 import io.flowforge.controlplane.outbox.persistence.OutboxEventRepository;
+import io.flowforge.controlplane.security.JobOwner;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -51,10 +52,13 @@ public class JobSubmissionService {
         this.idempotencyRetention = idempotencyRetention;
     }
 
-    public JobSubmissionResult submit(CreateJobRequest request, String idempotencyKey) {
+    public JobSubmissionResult submit(
+            CreateJobRequest request,
+            String idempotencyKey,
+            JobOwner owner) {
         String requestFingerprint = idempotencyKey == null ? null : fingerprint.calculate(request);
         try {
-            return submitInTransaction(request, idempotencyKey, requestFingerprint);
+            return submitInTransaction(request, idempotencyKey, requestFingerprint, owner);
         } catch (DataIntegrityViolationException exception) {
             if (idempotencyKey == null) {
                 throw exception;
@@ -63,6 +67,7 @@ public class JobSubmissionService {
                     request,
                     idempotencyKey,
                     requestFingerprint,
+                    owner,
                     exception);
         }
     }
@@ -70,19 +75,24 @@ public class JobSubmissionService {
     private JobSubmissionResult submitInTransaction(
             CreateJobRequest request,
             String idempotencyKey,
-            String requestFingerprint) {
+            String requestFingerprint,
+            JobOwner owner) {
         return transactionTemplate.execute(status -> {
             Instant now = clock.instant();
             if (idempotencyKey != null) {
                 jdbcTemplate.query(
                         "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
                         resultSet -> { },
-                        OPERATION_NAME + ":" + idempotencyKey);
-                var existing = idempotencyRepository.findForUpdate(OPERATION_NAME, idempotencyKey);
+                        OPERATION_NAME + ":" + owner.issuer() + ":" + owner.subject() + ":" + idempotencyKey);
+                var existing = idempotencyRepository.findForUpdate(
+                        OPERATION_NAME,
+                        owner.issuer(),
+                        owner.subject(),
+                        idempotencyKey);
                 if (existing.isPresent()) {
                     IdempotencyRecord record = existing.get();
                     if (record.getExpiresAt().isAfter(now)) {
-                        return replayOrConflict(record, requestFingerprint);
+                        return replayOrConflict(record, requestFingerprint, owner);
                     }
                     idempotencyRepository.delete(record);
                     idempotencyRepository.flush();
@@ -94,13 +104,15 @@ public class JobSubmissionService {
                     request.payload(),
                     request.scheduledAt(),
                     request.maxAttempts(),
-                    request.retryDelaySeconds());
+                    request.retryDelaySeconds(),
+                    owner);
             outboxRepository.save(OutboxEvent.jobCreated(job, now));
 
             if (idempotencyKey != null) {
                 idempotencyRepository.saveAndFlush(IdempotencyRecord.create(
                         OPERATION_NAME,
                         idempotencyKey,
+                        owner,
                         requestFingerprint,
                         job.getId(),
                         now,
@@ -114,24 +126,30 @@ public class JobSubmissionService {
             CreateJobRequest request,
             String idempotencyKey,
             String requestFingerprint,
+            JobOwner owner,
             DataIntegrityViolationException originalException) {
         var record = idempotencyRepository.findById(
-                new IdempotencyRecord.Id(OPERATION_NAME, idempotencyKey));
+                new IdempotencyRecord.Id(
+                        OPERATION_NAME,
+                        owner.issuer(),
+                        owner.subject(),
+                        idempotencyKey));
         if (record.isEmpty()) {
             throw originalException;
         }
         if (!record.get().getExpiresAt().isAfter(clock.instant())) {
-            return submitInTransaction(request, idempotencyKey, requestFingerprint);
+            return submitInTransaction(request, idempotencyKey, requestFingerprint, owner);
         }
-        return replayOrConflict(record.get(), requestFingerprint);
+        return replayOrConflict(record.get(), requestFingerprint, owner);
     }
 
     private JobSubmissionResult replayOrConflict(
             IdempotencyRecord record,
-            String requestFingerprint) {
+            String requestFingerprint,
+            JobOwner owner) {
         if (!record.getRequestFingerprint().equals(requestFingerprint)) {
             throw new IdempotencyConflictException();
         }
-        return new JobSubmissionResult(jobService.get(record.getJobId()), true);
+        return new JobSubmissionResult(jobService.get(record.getJobId(), owner, false), true);
     }
 }

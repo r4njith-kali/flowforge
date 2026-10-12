@@ -19,10 +19,14 @@ public interface IdempotencyRecordRepository
             select record
             from IdempotencyRecord record
             where record.id.operationName = :operationName
+              and record.id.issuer = :issuer
+              and record.id.subject = :subject
               and record.id.key = :key
             """)
     Optional<IdempotencyRecord> findForUpdate(
             @Param("operationName") String operationName,
+            @Param("issuer") String issuer,
+            @Param("subject") String subject,
             @Param("key") String key);
 
     @Modifying

@@ -4,6 +4,7 @@ import io.flowforge.controlplane.idempotency.api.InvalidIdempotencyKeyException;
 import io.flowforge.controlplane.job.domain.JobStatus;
 import io.flowforge.controlplane.job.service.JobService;
 import io.flowforge.controlplane.job.service.JobSubmissionService;
+import io.flowforge.controlplane.security.JobOwner;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -14,6 +15,9 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -43,15 +47,20 @@ public class JobController {
     }
 
     @PostMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR')")
     @Operation(summary = "Create a job")
     public ResponseEntity<JobResponse> create(
             @Valid @RequestBody CreateJobRequest request,
-            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey) {
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+            @AuthenticationPrincipal Jwt principal) {
         if (idempotencyKey != null
                 && (idempotencyKey.isBlank() || idempotencyKey.length() > 255)) {
             throw new InvalidIdempotencyKeyException();
         }
-        var submission = jobSubmissionService.submit(request, idempotencyKey);
+        var submission = jobSubmissionService.submit(
+                request,
+                idempotencyKey,
+                JobOwner.from(principal));
         var job = submission.job();
         var location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}")
@@ -61,6 +70,7 @@ public class JobController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR', 'VIEWER')")
     @Operation(summary = "List jobs")
     public JobPageResponse list(
             @Parameter(description = "Filter by lifecycle status")
@@ -70,30 +80,54 @@ public class JobController {
             @RequestParam(name = "page", defaultValue = "0") @Min(0) int page,
             @RequestParam(name = "size", defaultValue = "20") @Min(1) @Max(MAX_PAGE_SIZE) int size,
             @RequestParam(name = "sortBy", defaultValue = "createdAt") String sortBy,
-            @RequestParam(name = "direction", defaultValue = "DESC") Sort.Direction direction) {
+            @RequestParam(name = "direction", defaultValue = "DESC") Sort.Direction direction,
+            @AuthenticationPrincipal Jwt principal) {
         if (jobType != null && (jobType.isBlank() || jobType.length() > 200)) {
             throw new InvalidJobQueryException("jobType filter must contain 1 to 200 characters");
         }
 
         Sort sort = Sort.by(direction, JobSortField.fromParameter(sortBy).property());
         return JobPageResponse.from(
-                jobService.list(status, jobType, PageRequest.of(page, size, sort)));
+                jobService.list(
+                        status,
+                        jobType,
+                        PageRequest.of(page, size, sort),
+                        JobOwner.from(principal),
+                        isAdministrator(principal)));
     }
 
     @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR', 'VIEWER')")
     @Operation(summary = "Get a job")
-    public JobResponse get(@PathVariable("id") UUID id) {
-        return JobResponse.from(jobService.get(id));
+    public JobResponse get(
+            @PathVariable("id") UUID id,
+            @AuthenticationPrincipal Jwt principal) {
+        return JobResponse.from(jobService.get(
+                id,
+                JobOwner.from(principal),
+                isAdministrator(principal)));
     }
 
     @PostMapping("/{id}/cancel")
+    @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR')")
     @Operation(summary = "Cancel a job before dispatch is acknowledged")
-    public ResponseEntity<JobResponse> cancel(@PathVariable("id") UUID id) {
-        JobResponse job = JobResponse.from(jobService.cancel(id));
+    public ResponseEntity<JobResponse> cancel(
+            @PathVariable("id") UUID id,
+            @AuthenticationPrincipal Jwt principal) {
+        JobResponse job = JobResponse.from(jobService.cancel(
+                id,
+                JobOwner.from(principal),
+                isAdministrator(principal)));
         if (job.cancelRequestedAt() != null && job.status() == JobStatus.RUNNING) {
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
         }
         return ResponseEntity.ok(job);
+    }
+
+    private static boolean isAdministrator(Jwt principal) {
+        return new io.flowforge.controlplane.security.KeycloakRoleConverter()
+                .convert(principal).stream()
+                .anyMatch(authority -> authority.getAuthority().equals("ROLE_ADMIN"));
     }
 
     private enum JobSortField {

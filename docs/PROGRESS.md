@@ -8,7 +8,7 @@ Last updated: 2026-10-13
 | 2. PostgreSQL persistence and job management REST API | Complete | `mvn -B -ntp clean verify`: 23 tests passed, 0 failed/errors; includes PostgreSQL 16 Testcontainers migration and REST integration tests. Compose config validated. |
 | 3. Idempotent submission and outbox | Complete | Optional operation-scoped idempotency with 24-hour retention; transactional `JobCreated` outbox; PostgreSQL integration coverage. No publisher/Kafka delivery is implemented yet. |
 | 4. Scheduling and Kafka dispatch | Complete | PostgreSQL-backed `SKIP LOCKED` outbox claims, Kafka acknowledgement sequencing, scheduled eligibility, bounded retries/leases, and PostgreSQL+Kafka Testcontainers coverage. |
-| 5. Worker runtime and recovery | Not started | Add worker handlers, attempt leases, heartbeat, cancellation, and crash recovery. |
+| 5. Worker runtime and recovery | Complete | Independent Spring Boot Maven service; Kafka dispatch consumer, PostgreSQL-fenced attempts, leases/heartbeats, cooperative cancellation, bounded retries, and lease-expiry recovery. Verified with PostgreSQL and Kafka Testcontainers. |
 | 6. Operator UI | Not started | Add React/TypeScript console and typed API client with accessibility and UI tests. |
 | 7. Production readiness | Not started | Add authentication, quotas, retention, Kafka/Redis/monitoring deployment, resilience tests, and runbooks. |
 
@@ -73,9 +73,53 @@ Last updated: 2026-10-13
   concurrent publishers, lease expiry, due scheduling, cancellation, and
   terminal retry exhaustion.
 
+## Delivered in milestone 5
+
+- Added an independent `services/worker` Spring Boot Maven module and Docker
+  Compose service. Workers join one Kafka consumer group and can be scaled
+  independently. Compose provides a container-only Kafka listener in addition
+  to the existing host listener.
+- Flyway V4 additively creates worker lease/fencing/result/error fields and
+  persistent `job_attempts` with unique job/attempt numbers and lease indexes.
+  The control plane remains the migration owner; start it against the target
+  database before deploying workers.
+- A Kafka `JobCreated` event triggers a PostgreSQL row-locked claim. The claim
+  increments the job attempt and fencing token and persists the worker ID and
+  lease before execution begins. Duplicate events cannot claim an active or
+  terminal job. Kafka offsets are committed after listener completion; if a
+  claimed worker crashes, the independently running PostgreSQL recovery scan
+  redrives eligible jobs even after the original offset is committed.
+- Registered `JobHandler` implementations include `demo.echo` and bounded
+  `demo.delay` (maximum 30 seconds). Unsupported types fail permanently.
+  Unexpected errors are transient; handlers may explicitly classify failures.
+- Heartbeats renew owned leases. Completion and failure updates require both
+  worker ID and current fencing token. Expired attempts are marked
+  `ABANDONED`; recovery starts a higher-token attempt or fails the job after
+  the configured maximum.
+- Transient failures return jobs to `DISPATCHED` with a durable
+  `next_attempt_at`; the attempt is `RETRY_WAIT`. Exponential backoff is capped
+  by configuration. Per-job and worker maximum-attempt settings both apply.
+- Cancelling a running job records `cancel_requested_at` and returns
+  `202 Accepted` while the job remains `RUNNING`. Cooperative handlers observe
+  the request; a completion racing with cancellation persists `CANCELLED`
+  instead of `COMPLETED`. Non-cooperative handler code may continue until it
+  returns or its lease expires.
+- Worker logs and Micrometer metrics cover execution outcomes, retries,
+  fencing, terminal failures, and execution duration. Integration tests cover
+  successful execution, unsupported types, duplicate Kafka delivery,
+  concurrent claims, retries/exhaustion, expired lease recovery/fencing,
+  scheduled eligibility, and cooperative cancellation.
+- Delivery and handler side effects remain at least once. Fencing protects
+  database state only; downstream side effects must be idempotent. Worker
+  schema migrations must be applied by the control-plane Flyway owner first.
+- Final verification: `mvn -B -ntp clean verify
+  -Dtestcontainers.docker-api-version=1.40` passed all 50 tests (41
+  control-plane, 9 worker) using OpenJDK 25.0.1 with Java 21 release
+  compilation. Compose configuration validation and the worker Docker image
+  build also succeeded. The Testcontainers Docker API override is local-only
+  and is not required in CI.
+
 ## Explicitly not delivered
 
-Kafka consumers/workers and execution retries, workflow definitions,
-multi-tenant authentication, Redis, Prometheus/Grafana dashboards, and the
-web console remain future milestones. Job retry settings are persisted but
-are not yet acted on by a worker.
+Workflow definitions, multi-tenant authentication, Redis, provisioned
+Prometheus/Grafana dashboards, and the web console remain future milestones.

@@ -2,12 +2,13 @@
 
 ## 1. Goals and scope
 
-FlowForge will orchestrate durable, asynchronous workflows with explicit job
-state, bounded retries, safe worker recovery, and operational visibility. The
-first increment establishes the repository structure and a Java 21 Spring
-Boot control-plane service with automated health-endpoint coverage. It does
-not yet implement job submission, workflow execution, Kafka consumers, or
-infrastructure deployment.
+FlowForge orchestrates durable, asynchronous jobs with explicit state,
+bounded retries, safe worker recovery, and operational visibility. The
+initial increment established the repository structure and Java 21 Spring
+Boot control plane; the current foundation also includes job management,
+PostgreSQL persistence, Kafka outbox dispatch, and a separately scalable
+worker runtime. Workflow definitions, the operator UI, tenant authentication,
+and production infrastructure remain future work.
 
 ### Initial technology choices
 
@@ -84,10 +85,10 @@ infra/
 docs/
 ```
 
-The initial Maven reactor contains the root parent and the
-`services/control-plane` module. Modules are added when their corresponding
-milestones begin; shared code should only be extracted after a concrete
-cross-service reuse case appears.
+The Maven reactor currently contains the root parent plus
+`services/control-plane` and `services/worker`. Shared code should only be
+extracted after a concrete cross-service reuse case appears; PostgreSQL schema
+migrations remain packaged and applied by the control plane.
 
 ## 4. Service boundaries
 
@@ -154,10 +155,16 @@ application and exposed as opaque IDs.
 ### `job_attempts`
 
 - `id UUID PRIMARY KEY`, `job_id UUID NOT NULL`, `attempt_number INTEGER`
-- `status TEXT NOT NULL`, `worker_id TEXT`, `lease_expires_at TIMESTAMPTZ`
-- `started_at`, `heartbeat_at`, `finished_at`
+- `status TEXT NOT NULL`, `worker_id TEXT`, `fencing_token BIGINT NOT NULL`
+- `lease_expires_at TIMESTAMPTZ`, `started_at`, `heartbeat_at`, `finished_at`
 - `error JSONB`, `result JSONB`, `created_at`
 - Unique `(job_id, attempt_number)`; index on `(status, lease_expires_at)`.
+
+Implemented V4 execution fields on `jobs` include `lease_owner`,
+`lease_expires_at`, monotonic `fencing_token`, due `next_attempt_at`,
+`cancel_requested_at`, `result`, and `error`. The `control-plane` owns Flyway
+migrations for the shared database; workers must start only after it has
+applied the current schema.
 
 ### `idempotency_keys`
 
@@ -278,9 +285,9 @@ Kafka events carry `eventId`, `eventType`, `schemaVersion`, `occurredAt`,
 not include `tenantId`; tenant identity must be added through a compatible
 contract or version before multi-tenant use. Consumers keep an
 inbox/deduplication record or perform an atomic state/version transition so
-replayed event IDs do not apply a transition twice. Before starting a job, a
-future consumer must confirm that the PostgreSQL job remains eligible and has
-not been cancelled.
+replayed event IDs do not apply a transition twice. Before starting a job, the
+worker confirms through its atomic PostgreSQL claim that the job remains
+eligible and has not been cancelled.
 
 ## 7. Job lifecycle and worker execution
 
@@ -288,10 +295,10 @@ not been cancelled.
 
 ```text
 PENDING / due SCHEDULED -> DISPATCHING -> DISPATCHED -> RUNNING -> COMPLETED
-                                  |              |         |-> RETRY_WAIT -> SCHEDULED
+                                  |              |         |-> DISPATCHED (retry due later)
                                   |              |         |-> FAILED
                                   |              |         |-> CANCELLED
-                                  |              |-> CANCELLED (before worker start)
+                                  |-> CANCELLED (cancel before publication ack)
                                   |-> PENDING / SCHEDULED (publication retry)
                                   |-> FAILED (publication attempts exhausted)
 PENDING / SCHEDULED -> CANCELLED
@@ -303,11 +310,14 @@ acknowledged by Kafka. `DISPATCHING` means the publisher has a live claim;
 publication was recorded. Neither means the worker started or succeeded.
 Publication retry returns a job to `PENDING` or `SCHEDULED`; exhausted
 publication attempts mark it `FAILED` without claiming that execution ran.
-`RETRY_WAIT` is the planned durable state for worker execution retries.
-Cancellation is available until the broker acknowledgement is recorded. A
-cancel racing with a send already in flight cannot retract a Kafka-accepted
-message, so a worker must check the authoritative PostgreSQL state before
-starting. Cancellation of running work is cooperative and bounded.
+Execution retries keep the job in `DISPATCHED` and persist their future
+eligibility in `next_attempt_at`; the attempt row is `RETRY_WAIT`. Running
+cancellation sets `cancel_requested_at` while preserving `RUNNING`, so the API
+can report a pending cancellation rather than falsely reporting that execution
+has stopped. A cooperative handler observes the request and transitions the
+job to `CANCELLED`. A cancel racing with a send already in flight cannot
+retract a Kafka-accepted message; workers check authoritative PostgreSQL state
+before claiming it.
 
 ### Execution protocol
 
@@ -315,29 +325,36 @@ starting. Cancellation of running work is cooperative and bounded.
    job event, and outbox event. It responds accepted only after commit.
 2. Outbox publisher claims eligible rows using a short database transaction,
    commits the lease, and publishes an at-least-once dispatch event.
-3. Worker consumes the event, atomically claims/creates the next attempt,
-   transitions the job to `RUNNING`, and receives a unique lease token and
-   expiry. Stale tokens cannot complete a newer attempt.
-4. Worker heartbeats at a fraction of the lease interval. Execution handlers
-   receive the job ID, attempt number, cancellation signal, and recommended
-   downstream idempotency key.
-5. Completion or failure is committed only if the attempt and lease token are
-   current. Job state, attempt, history, and any resulting outbox event change
-   in one transaction.
-6. If the worker disappears, lease expiry makes the attempt recoverable.
-   Recovery records the lost attempt and retries if policy allows; otherwise
-   it transitions to `FAILED`.
+3. Worker consumes the event and atomically claims a due `DISPATCHED` job,
+   transitions it to `RUNNING`, increments the monotonic fencing token, and
+   inserts a unique attempt row with worker ID and lease. A duplicate event
+   cannot claim an active or terminal job.
+4. Worker heartbeats renew unexpired leases. Handlers receive job ID, attempt
+   number, fencing token, and cooperative cancellation check. Handler code
+   runs outside database transactions.
+5. Completion or failure is committed only if worker ID and fencing token are
+   current. Job state and attempt result/failure are changed in one
+   PostgreSQL transaction. The Kafka record is committed after listener
+   processing; if a worker crashes, a PostgreSQL recovery scan independently
+   finds due retries and expired leases.
+6. Recovery marks the prior attempt abandoned and increments the fencing
+   token. The old worker can no longer update FlowForge state; it may still
+   have performed an external side effect before losing its lease.
 
 ## 8. Retry, idempotency, and failure recovery
 
-- Retry only classified transient failures; validation and permanent handler
-  errors fail without retry unless workflow policy explicitly says otherwise.
-- Worker execution retry policy: maximum 5 attempts, exponential delay
-  `min(initialDelay * 2^(attempt-1), maxDelay)` plus bounded random jitter.
-  Defaults remain configuration policy until product-level limits are set.
+- Retry only classified transient failures; unsupported job types and explicit
+  permanent handler errors fail without retry. Unexpected handler exceptions
+  are treated as transient.
+- The effective worker attempt limit is the minimum of the job's
+  `max_attempts` and the worker's `FLOWFORGE_WORKER_MAX_ATTEMPTS` cap. The
+  current worker default cap is 100; newly submitted jobs default to 5.
+  Exponential retry delay is capped by `FLOWFORGE_WORKER_RETRY_MAX_DELAY`
+  (default 5 minutes), with the initial delay set to the larger of the job's
+  `retryDelaySeconds` and worker's configured retry base. No jitter is applied.
 - Outbox publication independently defaults to 8 claim attempts with
   exponential retry from 1 second up to 5 minutes; it has no jitter yet.
-- Persist `attempt_count`, next `run_at`, failure class, and last error before
+- Persist `attempt_count`, `next_attempt_at`, failure class, and error before
   acknowledging a failed attempt. A retry is a new attempt, never an in-place
   rewrite of attempt history.
 - Enforce request idempotency with a unique tenant/scope/key record and
@@ -351,8 +368,9 @@ starting. Cancellation of running work is cooperative and bounded.
 - On Kafka unavailability, keep committed outbox rows and retry publication
   with backoff. On Redis unavailability, fall back to database-backed
   correctness paths and degrade optional caching/rate limiting explicitly.
-- Poison messages are boundedly retried, then moved to a dead-letter topic
-  with original event metadata; alert and provide an operator replay path.
+- Poison or unsupported event contracts require operational intervention;
+  a dead-letter topic and replay tooling are not implemented. PostgreSQL's
+  recovery scan remains the authority for already-persisted eligible jobs.
 - Retain failure details safely: redact secrets, cap payload sizes, and apply
   tenant-aware retention to job inputs/results/events.
 
@@ -381,15 +399,17 @@ updated progress documentation, and a Conventional Commit.
 3. **Idempotent submission and outbox (complete):** operation-scoped request
    idempotency with defined retention, transactional `JobCreated` outbox,
    database-safe concurrent submission, and PostgreSQL integration tests.
-   Actual publisher/Kafka delivery remains in milestone 4.
+   The publisher and Kafka delivery were added in milestone 4.
 4. **Scheduling and Kafka dispatch (complete):** local Kafka, versioned job
    event contract, leased `SKIP LOCKED` outbox publisher, due-time eligibility,
    bounded retry/terminal failure, cancellation handling, metrics, and
-   PostgreSQL/Kafka Testcontainers integration tests. Worker execution and
-   consuming events remain milestone 5.
-5. **Worker runtime and recovery:** handler contract, attempt/lease fencing,
-   heartbeat, cancellation, transient/permanent failure classification,
-   crash/lease-expiry recovery tests.
+   PostgreSQL/Kafka Testcontainers integration tests. Worker consumption and
+   execution were delivered in milestone 5.
+5. **Worker runtime and recovery (complete):** independent Spring Boot worker,
+   versioned Kafka consumer, handler registry and demo handlers,
+   PostgreSQL-backed attempt history and lease/fencing, heartbeat, cooperative
+   cancellation, transient/permanent failure classification, bounded retries,
+   crash/lease-expiry recovery, and PostgreSQL/Kafka Testcontainers tests.
 6. **Operator UI:** React/TypeScript console, typed API client, job listing,
    detail and attempt timeline, cancel/retry operations with accessibility and
    UI tests.

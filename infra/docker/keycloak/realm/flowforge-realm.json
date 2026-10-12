@@ -1,0 +1,136 @@
+{
+  "realm": "flowforge",
+  "enabled": true,
+  "displayName": "FlowForge Local",
+  "roles": {
+    "realm": [
+      { "name": "ADMIN", "description": "May manage all permitted jobs and administrative operations" },
+      { "name": "OPERATOR", "description": "May submit and manage owned jobs" },
+      { "name": "VIEWER", "description": "May view owned jobs" }
+    ]
+  },
+  "clientScopes": [
+    {
+      "name": "flowforge-api-audience",
+      "description": "Adds the FlowForge API audience to browser access tokens",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "flowforge-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "flowforge-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "flowforge-api",
+      "name": "FlowForge API",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "flowforge-web",
+      "name": "FlowForge Dashboard",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/auth/callback",
+        "http://localhost:5173/auth/silent-renew.html"
+      ],
+      "webOrigins": ["http://localhost:5173"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5173/*"
+      },
+      "defaultClientScopes": ["flowforge-api-audience"],
+      "protocolMappers": [
+        {
+          "name": "flowforge-subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "flowforge-realm-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String"
+          }
+        },
+        {
+          "name": "flowforge-preferred-username",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-property-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "username",
+            "claim.name": "preferred_username",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "flowforge-admin",
+      "enabled": true,
+      "email": "flowforge-admin@localhost",
+      "emailVerified": true,
+      "firstName": "FlowForge",
+      "lastName": "Administrator",
+      "realmRoles": ["ADMIN"]
+    },
+    {
+      "username": "flowforge-operator",
+      "enabled": true,
+      "email": "flowforge-operator@localhost",
+      "emailVerified": true,
+      "firstName": "FlowForge",
+      "lastName": "Operator",
+      "realmRoles": ["OPERATOR"]
+    },
+    {
+      "username": "flowforge-viewer",
+      "enabled": true,
+      "email": "flowforge-viewer@localhost",
+      "emailVerified": true,
+      "firstName": "FlowForge",
+      "lastName": "Viewer",
+      "realmRoles": ["VIEWER"]
+    }
+  ]
+}

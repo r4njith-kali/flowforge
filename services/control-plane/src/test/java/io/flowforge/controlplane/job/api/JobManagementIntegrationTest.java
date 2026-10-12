@@ -70,6 +70,12 @@ class JobManagementIntegrationTest {
                 String.class);
 
         assertThat(jobsTable).isEqualTo("jobs");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT to_regclass('public.idempotency_records')",
+                String.class)).isEqualTo("idempotency_records");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT to_regclass('public.outbox_events')",
+                String.class)).isEqualTo("outbox_events");
     }
 
     @Test

@@ -49,6 +49,9 @@ public class Job {
     @Column(name = "completed_at")
     private Instant completedAt;
 
+    @Column(name = "cancel_requested_at")
+    private Instant cancelRequestedAt;
+
     @Column(name = "attempt_count", nullable = false)
     private int attemptCount;
 
@@ -100,6 +103,16 @@ public class Job {
         updatedAt = now;
     }
 
+    public void requestCancellation(Instant now) {
+        if (status != JobStatus.RUNNING) {
+            throw new InvalidJobStateException("Only RUNNING jobs can receive a cancellation request");
+        }
+        if (cancelRequestedAt == null) {
+            cancelRequestedAt = now;
+            updatedAt = now;
+        }
+    }
+
     public void start(Instant now) {
         if (status != JobStatus.PENDING) {
             throw new InvalidJobStateException("Only PENDING jobs can be started");
@@ -143,6 +156,10 @@ public class Job {
 
     public Instant getCompletedAt() {
         return completedAt;
+    }
+
+    public Instant getCancelRequestedAt() {
+        return cancelRequestedAt;
     }
 
     public int getAttemptCount() {

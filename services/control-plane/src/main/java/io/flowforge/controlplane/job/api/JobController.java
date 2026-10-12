@@ -13,6 +13,7 @@ import jakarta.validation.constraints.Min;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -88,7 +89,11 @@ public class JobController {
     @PostMapping("/{id}/cancel")
     @Operation(summary = "Cancel a job before dispatch is acknowledged")
     public ResponseEntity<JobResponse> cancel(@PathVariable("id") UUID id) {
-        return ResponseEntity.ok(JobResponse.from(jobService.cancel(id)));
+        JobResponse job = JobResponse.from(jobService.cancel(id));
+        if (job.cancelRequestedAt() != null && job.status() == JobStatus.RUNNING) {
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(job);
+        }
+        return ResponseEntity.ok(job);
     }
 
     private enum JobSortField {

@@ -7,6 +7,7 @@ import io.flowforge.controlplane.job.domain.JobStatus;
 import io.flowforge.controlplane.job.persistence.JobRepository;
 import io.flowforge.controlplane.job.persistence.JobSpecifications;
 import org.springframework.jdbc.core.JdbcTemplate;
+import jakarta.persistence.EntityManager;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -24,11 +25,17 @@ public class JobService {
     private final JobRepository jobRepository;
     private final Clock clock;
     private final JdbcTemplate jdbcTemplate;
+    private final EntityManager entityManager;
 
-    public JobService(JobRepository jobRepository, Clock clock, JdbcTemplate jdbcTemplate) {
+    public JobService(
+            JobRepository jobRepository,
+            Clock clock,
+            JdbcTemplate jdbcTemplate,
+            EntityManager entityManager) {
         this.jobRepository = jobRepository;
         this.clock = clock;
         this.jdbcTemplate = jdbcTemplate;
+        this.entityManager = entityManager;
     }
 
     @Transactional
@@ -64,15 +71,55 @@ public class JobService {
         if (job.getStatus() == JobStatus.CANCELLED) {
             return job;
         }
-        job.cancel(clock.instant());
-        jdbcTemplate.update("""
-                UPDATE outbox_events
-                SET cancelled_at = ?, claimed_by = NULL, claim_expires_at = NULL
-                WHERE aggregate_id = ?
-                  AND published_at IS NULL
-                  AND terminal_failure_at IS NULL
-                  AND cancelled_at IS NULL
-                """, Timestamp.from(clock.instant()), id);
-        return job;
+        if (job.getStatus() == JobStatus.RUNNING && job.getCancelRequestedAt() != null) {
+            return job;
+        }
+        Instant now = clock.instant();
+        var updatedStatus = jdbcTemplate.query("""
+                UPDATE jobs
+                SET status = CASE WHEN status = 'RUNNING' THEN 'RUNNING' ELSE 'CANCELLED' END,
+                    cancel_requested_at = CASE
+                        WHEN status = 'RUNNING' THEN COALESCE(cancel_requested_at, ?)
+                        ELSE cancel_requested_at
+                    END,
+                    completed_at = CASE
+                        WHEN status = 'RUNNING' THEN completed_at
+                        ELSE ?
+                    END,
+                    updated_at = ?,
+                    version = version + 1
+                WHERE id = ?
+                  AND status IN ('PENDING', 'SCHEDULED', 'DISPATCHING', 'RUNNING')
+                  AND (status <> 'RUNNING' OR cancel_requested_at IS NULL)
+                RETURNING status
+                """,
+                (resultSet, rowNumber) -> resultSet.getString("status"),
+                Timestamp.from(now),
+                Timestamp.from(now),
+                Timestamp.from(now),
+                id);
+        if (updatedStatus.isEmpty()) {
+            entityManager.clear();
+            Job latest = jobRepository.findById(id).orElseThrow(() -> new JobNotFoundException(id));
+            if (latest.getStatus() == JobStatus.CANCELLED) {
+                return latest;
+            }
+            if (latest.getStatus() == JobStatus.RUNNING && latest.getCancelRequestedAt() != null) {
+                return latest;
+            }
+            latest.cancel(now);
+        }
+        if ("CANCELLED".equals(updatedStatus.isEmpty() ? null : updatedStatus.getFirst())) {
+            jdbcTemplate.update("""
+                    UPDATE outbox_events
+                    SET cancelled_at = ?, claimed_by = NULL, claim_expires_at = NULL
+                    WHERE aggregate_id = ?
+                      AND published_at IS NULL
+                      AND terminal_failure_at IS NULL
+                      AND cancelled_at IS NULL
+                    """, Timestamp.from(now), id);
+        }
+        entityManager.clear();
+        return jobRepository.findById(id).orElseThrow(() -> new JobNotFoundException(id));
     }
 }

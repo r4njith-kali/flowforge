@@ -94,6 +94,9 @@ class JobManagementIntegrationTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT to_regclass('public.outbox_events')",
                 String.class)).isEqualTo("outbox_events");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT to_regclass('public.job_attempts')",
+                String.class)).isEqualTo("job_attempts");
     }
 
     @Test
@@ -367,7 +370,7 @@ class JobManagementIntegrationTest {
     }
 
     @Test
-    void runningJobCannotBeCancelled() throws Exception {
+    void runningJobReceivesCooperativeCancellationRequest() throws Exception {
         var created = mockMvc.perform(post("/api/v1/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -382,14 +385,25 @@ class JobManagementIntegrationTest {
                 Timestamp.from(Instant.now()),
                 id);
 
+        var cancellation = mockMvc.perform(post("/api/v1/jobs/{id}/cancel", id))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("RUNNING"))
+                .andExpect(jsonPath("$.cancelRequestedAt").isNotEmpty())
+                .andReturn();
+        long version = objectMapper.readTree(cancellation.getResponse().getContentAsString())
+                .path("version").asLong();
         mockMvc.perform(post("/api/v1/jobs/{id}/cancel", id))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("JOB_STATE_CONFLICT"));
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.version").value(version));
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT status FROM jobs WHERE id = ?",
                 String.class,
                 id)).isEqualTo(JobStatus.RUNNING.name());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT cancel_requested_at FROM jobs WHERE id = ?",
+                Timestamp.class,
+                id)).isNotNull();
     }
 
     @Test

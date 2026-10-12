@@ -1,11 +1,12 @@
 package io.flowforge.controlplane.job.service;
 
-import io.flowforge.controlplane.job.domain.InvalidJobStateException;
 import io.flowforge.controlplane.job.domain.Job;
 import io.flowforge.controlplane.job.domain.JobNotFoundException;
 import io.flowforge.controlplane.job.domain.JobStatus;
 import io.flowforge.controlplane.job.persistence.JobRepository;
+import jakarta.persistence.EntityManager;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.data.jpa.domain.Specification;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,9 @@ class JobServiceTest {
     @Mock
     private JdbcTemplate jdbcTemplate;
 
+    @Mock
+    private EntityManager entityManager;
+
     private JobService jobService;
 
     @BeforeEach
@@ -49,7 +53,8 @@ class JobServiceTest {
         jobService = new JobService(
                 jobRepository,
                 Clock.fixed(NOW, ZoneOffset.UTC),
-                jdbcTemplate);
+                jdbcTemplate,
+                entityManager);
     }
 
     @Test
@@ -81,7 +86,13 @@ class JobServiceTest {
     @Test
     void cancelTransitionsPendingJobAndUpdatesCompletionTime() {
         Job job = Job.create("email.send", Map.of(), null, 2, 0, NOW.minusSeconds(5));
-        when(jobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        Job cancelledJob = Job.create("email.send", Map.of(), null, 2, 0, NOW.minusSeconds(5));
+        cancelledJob.cancel(NOW);
+        when(jobRepository.findById(job.getId())).thenReturn(Optional.of(job), Optional.of(cancelledJob));
+        when(jdbcTemplate.query(
+                any(String.class),
+                org.mockito.ArgumentMatchers.<RowMapper<String>>any(),
+                any(Object[].class))).thenReturn(java.util.List.of("CANCELLED"));
 
         Job cancelled = jobService.cancel(job.getId());
 
@@ -102,13 +113,23 @@ class JobServiceTest {
     }
 
     @Test
-    void cancelRejectsRunningJobs() {
+    void runningJobReceivesCancellationRequest() {
         Job job = Job.create("email.send", Map.of(), null, 2, 0, NOW);
         job.start(NOW);
-        when(jobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        Job cancelRequested = Job.create("email.send", Map.of(), null, 2, 0, NOW);
+        cancelRequested.start(NOW);
+        cancelRequested.requestCancellation(NOW);
+        when(jobRepository.findById(job.getId()))
+                .thenReturn(Optional.of(job), Optional.of(cancelRequested));
+        when(jdbcTemplate.query(
+                any(String.class),
+                org.mockito.ArgumentMatchers.<RowMapper<String>>any(),
+                any(Object[].class))).thenReturn(java.util.List.of("RUNNING"));
 
-        assertThatThrownBy(() -> jobService.cancel(job.getId()))
-                .isInstanceOf(InvalidJobStateException.class);
+        Job result = jobService.cancel(job.getId());
+
+        assertThat(result.getStatus()).isEqualTo(JobStatus.RUNNING);
+        assertThat(result.getCancelRequestedAt()).isEqualTo(NOW);
     }
 
     @Test

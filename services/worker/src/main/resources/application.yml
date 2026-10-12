@@ -1,0 +1,49 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/flowforge}
+    username: ${DB_USERNAME:}
+    password: ${DB_PASSWORD:}
+  flyway:
+    enabled: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      group-id: ${FLOWFORGE_WORKER_GROUP_ID:flowforge-workers}
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.interval.ms: 3600000
+    listener:
+      ack-mode: record
+      concurrency: ${FLOWFORGE_WORKER_CONCURRENCY:1}
+
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+flowforge:
+  kafka:
+    topics:
+      job-dispatch: ${FLOWFORGE_JOB_DISPATCH_TOPIC:flowforge.job-dispatch.v1}
+  worker:
+    lease: ${FLOWFORGE_WORKER_LEASE:PT1M}
+    heartbeat-interval-ms: ${FLOWFORGE_WORKER_HEARTBEAT_INTERVAL_MS:15000}
+    recovery-interval-ms: ${FLOWFORGE_WORKER_RECOVERY_INTERVAL_MS:5000}
+    recovery-batch-size: ${FLOWFORGE_WORKER_RECOVERY_BATCH_SIZE:10}
+    execution-concurrency: ${FLOWFORGE_WORKER_EXECUTION_CONCURRENCY:4}
+    max-attempts: ${FLOWFORGE_WORKER_MAX_ATTEMPTS:100}
+    retry-base-delay: ${FLOWFORGE_WORKER_RETRY_BASE_DELAY:PT1S}
+    retry-max-delay: ${FLOWFORGE_WORKER_RETRY_MAX_DELAY:PT5M}

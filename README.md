@@ -2,19 +2,18 @@
 
 FlowForge is a distributed workflow orchestration platform for defining,
 submitting, scheduling, and observing durable background jobs. The control
-plane uses Java 21 and Spring Boot with PostgreSQL persistence and a versioned
-job management API. Kafka, Redis, and the React/TypeScript operator UI remain
-planned components; Kafka workers are intentionally out of scope for the
-current milestone.
+plane uses Java 21 and Spring Boot with PostgreSQL persistence, a versioned job
+management API, and transactional outbox publication to Apache Kafka. Kafka
+workers, Redis, and the React/TypeScript operator UI remain planned components.
 
 ## Architecture at a glance
 
 The control plane exposes job creation, listing, detail, and cancellation
 endpoints. Flyway manages the PostgreSQL schema; the API persists jobs and
-returns DTOs, not JPA entities. The target architecture separates this API
-from a future scheduler/dispatcher and worker runtime. PostgreSQL remains the
-source of truth; Kafka will provide asynchronous work distribution in a later
-milestone. Redis is planned only for short-lived coordination and caching.
+returns DTOs, not JPA entities. PostgreSQL remains the source of truth. A
+database-backed outbox publisher claims eligible events and delivers them to
+Kafka; future workers will consume those dispatch messages. Redis is planned
+only for short-lived coordination and caching.
 
 See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the
 architecture, service boundaries, data model, lifecycle, and roadmap.
@@ -27,13 +26,13 @@ apps/
   web/                         React + TypeScript operator console (planned)
 services/
   control-plane/               Spring Boot HTTP API and PostgreSQL job store
-  scheduler/                   Durable scheduling and Kafka dispatch (planned)
+  scheduler/                   Scheduling currently runs in control-plane outbox polling
   worker/                      Worker runtime and execution adapters (planned)
 libs/
-  contracts/                   Shared API/event schemas (planned)
+  contracts/events/            Versioned Kafka event JSON schemas
   java-common/                 Shared Java primitives (planned)
 infra/
-  docker/                      PostgreSQL local Compose configuration
+  docker/                      PostgreSQL and Kafka local Compose configuration
   monitoring/                  Prometheus/Grafana configuration (planned)
 docs/
   IMPLEMENTATION_PLAN.md
@@ -46,7 +45,7 @@ docs/
 - Apache Maven 3.9 or newer
 - Docker Engine with Docker Compose v2 (for PostgreSQL and Testcontainers)
 
-## Start PostgreSQL locally
+## Start PostgreSQL and Kafka locally
 
 From the repository root, create a local environment file and set a private
 development password:
@@ -54,7 +53,7 @@ development password:
 ```bash
 cp .env.example .env
 # Edit POSTGRES_PASSWORD and DB_PASSWORD in .env to the same local value.
-docker compose -f infra/docker/compose.yaml up -d postgres
+docker compose -f infra/docker/compose.yaml up -d postgres kafka
 set -a
 source .env
 set +a
@@ -62,7 +61,8 @@ set +a
 
 `.env` is ignored by Git. Compose requires `POSTGRES_DB`, `POSTGRES_USER`, and
 `POSTGRES_PASSWORD`; the application reads `DB_URL`, `DB_USERNAME`, and
-`DB_PASSWORD`. The example file contains placeholders only. Flyway applies
+`DB_PASSWORD`. Kafka uses `KAFKA_BOOTSTRAP_SERVERS` (default
+`localhost:9092`). The example file contains placeholders only. Flyway applies
 the versioned schema on application startup, and Hibernate validates mappings
 without generating or modifying schema.
 
@@ -75,9 +75,13 @@ mvn -B -ntp verify
 mvn -pl services/control-plane spring-boot:run
 ```
 
-The test suite includes unit, MVC-slice, and PostgreSQL Testcontainers
-integration tests, so Docker must be available for `verify`. The local test
-configuration pins the Docker API level to one supported by Testcontainers.
+The test suite includes unit, MVC-slice, PostgreSQL Testcontainers, and Kafka
+Testcontainers integration tests, so Docker must be available for `verify`.
+Testcontainers negotiates the Docker API by default. On a local daemon that
+requires a compatibility pin, use
+`mvn -B -ntp clean verify -Dtestcontainers.docker-api-version=1.40`; this
+optional Maven profile only affects Surefire tests. CI should use normal Docker
+API negotiation and must not depend on this local override.
 
 The control plane binds to port `8080`. Check readiness and API documentation:
 
@@ -97,7 +101,7 @@ All routes use `/api/v1` and JSON:
 | `POST` | `/api/v1/jobs` | Create a job; returns `201 Created` and a `Location` header |
 | `GET` | `/api/v1/jobs` | List jobs with optional status/type filters and bounded pagination |
 | `GET` | `/api/v1/jobs/{id}` | Retrieve a job |
-| `POST` | `/api/v1/jobs/{id}/cancel` | Cancel a pending or scheduled job |
+| `POST` | `/api/v1/jobs/{id}/cancel` | Cancel before dispatch is acknowledged |
 
 Create request fields are `jobType` (required, 1–200 characters), `payload`
 (required JSON object), optional `scheduledAt`, `maxAttempts` (default 5,
@@ -108,8 +112,10 @@ equivalent submissions return the original job; using the same key with
 different content returns `409 Conflict`. Keys are scoped to
 `POST:/api/v1/jobs` and retained for 24 hours. This API is currently
 single-tenant: tenant scoping must be added before multi-tenant deployment.
-Cancellation is idempotent for already-cancelled jobs and returns `409
-Conflict` for other ineligible states. State changes use optimistic locking.
+Cancellation is idempotent for already-cancelled jobs and remains available
+while a job is pending, scheduled, or in the publisher's `DISPATCHING` phase;
+it returns `409 Conflict` after dispatch is acknowledged or for other
+ineligible states. State changes use optimistic locking.
 
 List parameters include `status`, exact `jobType`, zero-based `page` (default
 0), `size` (default 20, maximum 100), `sortBy` (`createdAt`, `updatedAt`,
@@ -117,16 +123,35 @@ List parameters include `status`, exact `jobType`, zero-based `page` (default
 Errors use RFC-style Problem Details with a stable `code`; validation errors
 also include field-level details.
 
-Job creation and its `JobCreated` event are recorded atomically in PostgreSQL
-using the transactional outbox. The outbox includes retry and lease metadata
-and is designed for concurrent publishers using row claiming with
-`FOR UPDATE SKIP LOCKED`. No publisher, Kafka integration, or event delivery
-is implemented yet. When delivery is added, it will be at least once;
-consumers must be idempotent. This does not guarantee exactly-once execution
-or exactly-once external side effects. Idempotency records expire after 24
-hours; expired keys may be reused, and a scheduled cleanup removes expired
-records hourly.
+Job creation and its `JobCreated` event are recorded atomically in PostgreSQL.
+The publisher claims bounded batches with `FOR UPDATE SKIP LOCKED`, commits
+the claim before network I/O, and marks events published only after Kafka
+acknowledges delivery. Claims expire for crash recovery; publication retries
+use bounded exponential backoff and become terminal after eight attempts by
+default. Future-dated jobs are not claimable until their scheduled time.
+The publisher defaults to a 50-event batch, one-second poll interval, one
+minute claim lease, and ten-second Kafka send timeout. Configure these with
+`FLOWFORGE_OUTBOX_BATCH_SIZE`, `FLOWFORGE_OUTBOX_POLL_INTERVAL_MS`,
+`FLOWFORGE_OUTBOX_CLAIM_LEASE`, and `FLOWFORGE_KAFKA_SEND_TIMEOUT`;
+`FLOWFORGE_OUTBOX_MAX_ATTEMPTS`, `FLOWFORGE_OUTBOX_RETRY_BASE_DELAY`, and
+`FLOWFORGE_OUTBOX_RETRY_MAX_DELAY` control retry limits and backoff.
 
-Kafka publication/consumers, retries at runtime, workflow definitions,
-authentication, Redis, monitoring, and the web console are future work;
-persisted retry settings are not yet acted on by a worker.
+Kafka messages use topic `flowforge.job-dispatch.v1`, a versioned JSON envelope
+([schema](libs/contracts/events/job-created-v1.schema.json)), and the job UUID
+as the message key. The key groups a job's messages on one partition; the
+local broker defaults to three partitions. Job status becomes `DISPATCHED`
+after broker acknowledgement and remains distinct from `RUNNING` or
+`COMPLETED`. Delivery is at least once: an acknowledged message may be
+delivered again if the process crashes before persisting `published_at`.
+Consumers must dedupe by `eventId` and confirm current job state before
+execution. A cancellation racing an already-started broker send cannot retract
+a message already accepted by Kafka; consumers must not execute a job whose
+PostgreSQL state is `CANCELLED`. Exactly-once distributed execution and
+exactly-once external side effects are not guaranteed.
+
+Micrometer exports `flowforge.outbox.pending`,
+`flowforge.outbox.published`, `flowforge.outbox.publication.failures`,
+`flowforge.outbox.terminal.failures`, and
+`flowforge.job.dispatch.latency`. Job retry settings are still not executed by
+a worker; workflow definitions, authentication, Redis, dashboards, workers,
+and the web console remain future work.

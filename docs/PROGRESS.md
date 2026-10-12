@@ -7,7 +7,7 @@ Last updated: 2026-10-13
 | 1. Architecture and project foundation | Complete | Java 21 Maven reactor and health endpoint committed; tested with Java 25 using `--release 21`. |
 | 2. PostgreSQL persistence and job management REST API | Complete | `mvn -B -ntp clean verify`: 23 tests passed, 0 failed/errors; includes PostgreSQL 16 Testcontainers migration and REST integration tests. Compose config validated. |
 | 3. Idempotent submission and outbox | Complete | Optional operation-scoped idempotency with 24-hour retention; transactional `JobCreated` outbox; PostgreSQL integration coverage. No publisher/Kafka delivery is implemented yet. |
-| 4. Scheduling and Kafka dispatch | Not started | Add due-job claiming, dispatch, backpressure, retry scheduling, and dead-letter handling. |
+| 4. Scheduling and Kafka dispatch | Complete | PostgreSQL-backed `SKIP LOCKED` outbox claims, Kafka acknowledgement sequencing, scheduled eligibility, bounded retries/leases, and PostgreSQL+Kafka Testcontainers coverage. |
 | 5. Worker runtime and recovery | Not started | Add worker handlers, attempt leases, heartbeat, cancellation, and crash recovery. |
 | 6. Operator UI | Not started | Add React/TypeScript console and typed API client with accessibility and UI tests. |
 | 7. Production readiness | Not started | Add authentication, quotas, retention, Kafka/Redis/monitoring deployment, resilience tests, and runbooks. |
@@ -45,9 +45,37 @@ Last updated: 2026-10-13
   at least once, so consumers and external side effects must be idempotent;
   exactly-once distributed execution is not promised.
 
+## Delivered in milestone 4
+
+- Apache Kafka 3.9.1 KRaft broker in local Compose, with three default
+  partitions and configurable host port/bootstrap address.
+- Versioned `JobCreated` v1 JSON envelope and schema in
+  `libs/contracts/events/`; Kafka topic is `flowforge.job-dispatch.v1`, keyed
+  by job UUID to keep each job's events on one partition.
+- Bounded outbox polling and batch claiming with PostgreSQL
+  `FOR UPDATE SKIP LOCKED`. Claims use leases and increment attempt counts;
+  expired final claims are terminalized so publisher crashes cannot cause
+  unbounded retries.
+- Kafka producer waits for broker acknowledgement outside database
+  transactions, then atomically marks the event published and moves the job
+  from `DISPATCHING` to `DISPATCHED`. `DISPATCHED` is not worker execution or
+  successful completion.
+- Future scheduled jobs become claimable only when their scheduled time is
+  due. Cancelling a job before acknowledgement marks its unpublished outbox
+  event as cancelled. A cancellation racing an already-started broker send
+  cannot retract a broker-accepted message; future consumers must check the
+  current PostgreSQL job state before starting work.
+- Kafka errors use bounded exponential backoff and a terminal publication
+  failure state. Micrometer tracks pending events, successful publication,
+  failures, terminal failures, and dispatch latency.
+- PostgreSQL and Kafka Testcontainers coverage verifies acknowledgements,
+  outage/recovery behavior, duplicate delivery after a simulated crash,
+  concurrent publishers, lease expiry, due scheduling, cancellation, and
+  terminal retry exhaustion.
+
 ## Explicitly not delivered
 
-Kafka publication/consumers, worker execution, retries at runtime, request
-workflow definitions, multi-tenant authentication, Redis, Prometheus/Grafana,
-and the web console remain future milestones. Job retry settings are persisted
-but are not yet acted on by a worker.
+Kafka consumers/workers and execution retries, workflow definitions,
+multi-tenant authentication, Redis, Prometheus/Grafana dashboards, and the
+web console remain future milestones. Job retry settings are persisted but
+are not yet acted on by a worker.

@@ -169,12 +169,16 @@ application and exposed as opaque IDs.
 
 ### `outbox_events`
 
-- `id UUID PRIMARY KEY`, `aggregate_type TEXT`, `aggregate_id UUID`
+- `id UUID PRIMARY KEY`, `aggregate_id UUID NOT NULL`
 - `event_type TEXT NOT NULL`, `schema_version INTEGER NOT NULL`
 - `payload JSONB NOT NULL`, `created_at TIMESTAMPTZ NOT NULL`
-- `published_at TIMESTAMPTZ`, `publish_attempts INTEGER NOT NULL DEFAULT 0`
-- Index `(created_at)` for unpublished events. Retain/archive published rows
-  according to the operational retention policy.
+- `published_at TIMESTAMPTZ`, `attempt_count INTEGER NOT NULL DEFAULT 0`,
+  `next_attempt_at TIMESTAMPTZ NOT NULL`, `last_error TEXT`
+- `claimed_by`, `claim_expires_at` support leased multi-publisher claims;
+  `terminal_failure_at` and `cancelled_at` distinguish terminal outcomes
+  without representing them as broker-published.
+- Partial ready index on `(next_attempt_at, created_at)`; published and
+  terminal events are retained/archived according to operational policy.
 
 ### `job_events`
 
@@ -229,52 +233,88 @@ tenant scoping must be added before multi-tenant deployment.
 
 Listing supports optional status and exact job type filters, zero-based
 `page`, bounded `size` (1–100), an allowlisted `sortBy`, and `ASC`/`DESC`
-direction. Cancelling `PENDING` or `SCHEDULED` transitions it immediately to
-`CANCELLED`; repeated cancellation of an already-cancelled job is idempotent.
-Other ineligible states return `409 Conflict`. Unknown jobs return `404`;
-malformed input and unsupported sorting return `400`.
+direction. Cancelling `PENDING`, `SCHEDULED`, or `DISPATCHING` transitions it
+immediately to `CANCELLED`; repeated cancellation of an already-cancelled job
+is idempotent. Other ineligible states return `409 Conflict`. Unknown jobs
+return `404`; malformed input and unsupported sorting return `400`.
 
 Each successful job submission and its `JobCreated` JSONB outbox event are
-persisted atomically. The outbox schema includes claim lease and retry fields;
-the future publisher can coordinate instances with `FOR UPDATE SKIP LOCKED`.
-No event is published in this milestone: there is no Kafka producer or
-publisher. Event delivery, once implemented, must be treated as at least once,
-and downstream consumers must be idempotent. Exactly-once distributed
-execution is not guaranteed.
+persisted atomically. The outbox publisher claims bounded batches using
+`FOR UPDATE SKIP LOCKED`, a publisher ID, and an expiring lease. Claiming and
+status changes happen in a short PostgreSQL transaction; Kafka I/O occurs
+after commit. An event is marked published only after broker acknowledgement.
+If a process crashes after acknowledgement but before the PostgreSQL commit,
+the event can be delivered again.
 
-### Planned event envelopes
+The local broker is Apache Kafka 3.9.1 in KRaft mode. V1 events use topic
+`flowforge.job-dispatch.v1`, key `aggregateId` (the job UUID), and a JSON
+envelope defined in
+[`libs/contracts/events/job-created-v1.schema.json`](../libs/contracts/events/job-created-v1.schema.json).
+Key-based partitioning preserves per-job ordering while partition assignment
+remains stable. Compatible changes may add optional fields without changing
+the v1 contract; breaking changes require a new schema and topic version.
+Kafka delivery is at least once, not exactly once.
+
+Jobs enter `DISPATCHING` while a claim is active and move to `DISPATCHED` only
+after acknowledgement has been recorded. Neither state means a worker has
+begun or completed execution. Future-dated `SCHEDULED` jobs are selected only
+when `scheduledAt` is due. Cancellation atomically marks the job and
+suppresses an unpublished event, including while it is claimed. If cancellation
+races a broker send already in progress, Kafka may still accept the message;
+consumers must check PostgreSQL job state before execution.
+
+Publication failures use exponential backoff (defaults: 1 second initial,
+5-minute maximum, 8 total attempts). Attempts count claims, including claims
+whose publisher crashed; expired final claims become terminal. Terminal
+publication failure marks the job `FAILED` and the event
+`terminal_failure_at` without setting `published_at`. Micrometer exposes
+pending event count, publication and terminal failure counters, successful
+publication count, and dispatch latency.
+
+### Event envelope and consumer expectations
 
 Kafka events carry `eventId`, `eventType`, `schemaVersion`, `occurredAt`,
-`tenantId`, `aggregateId`, and a typed payload. Dispatch is partitioned by
-`jobId` to preserve per-job order. Consumers keep an inbox/deduplication
-record or perform an atomic state/version transition so replayed event IDs do
-not apply a transition twice.
+`aggregateId`, and a typed payload. The current single-tenant v1 contract does
+not include `tenantId`; tenant identity must be added through a compatible
+contract or version before multi-tenant use. Consumers keep an
+inbox/deduplication record or perform an atomic state/version transition so
+replayed event IDs do not apply a transition twice. Before starting a job, a
+future consumer must confirm that the PostgreSQL job remains eligible and has
+not been cancelled.
 
 ## 7. Job lifecycle and worker execution
 
 ### States
 
 ```text
-QUEUED -> RUNNING -> SUCCEEDED
-                  -> RETRY_WAIT -> QUEUED
-                  -> FAILED
-                  -> CANCELLED
-QUEUED -> CANCELLED
-RUNNING -> CANCEL_REQUESTED -> CANCELLED
+PENDING / due SCHEDULED -> DISPATCHING -> DISPATCHED -> RUNNING -> COMPLETED
+                                  |              |         |-> RETRY_WAIT -> SCHEDULED
+                                  |              |         |-> FAILED
+                                  |              |         |-> CANCELLED
+                                  |              |-> CANCELLED (before worker start)
+                                  |-> PENDING / SCHEDULED (publication retry)
+                                  |-> FAILED (publication attempts exhausted)
+PENDING / SCHEDULED -> CANCELLED
 ```
 
-`RETRY_WAIT` is durable and records `run_at`; it transitions to `QUEUED` when
-eligible. `FAILED`, `SUCCEEDED`, and `CANCELLED` are terminal. Cancellation
-is cooperative for running work: a worker is notified and given a bounded
-grace period; hard process termination is an infrastructure action, not a
-guarantee that external side effects were undone.
+`PENDING` and `SCHEDULED` represent work accepted by the API but not yet
+acknowledged by Kafka. `DISPATCHING` means the publisher has a live claim;
+`DISPATCHED` means Kafka acknowledged the dispatch message and the outbox
+publication was recorded. Neither means the worker started or succeeded.
+Publication retry returns a job to `PENDING` or `SCHEDULED`; exhausted
+publication attempts mark it `FAILED` without claiming that execution ran.
+`RETRY_WAIT` is the planned durable state for worker execution retries.
+Cancellation is available until the broker acknowledgement is recorded. A
+cancel racing with a send already in flight cannot retract a Kafka-accepted
+message, so a worker must check the authoritative PostgreSQL state before
+starting. Cancellation of running work is cooperative and bounded.
 
 ### Execution protocol
 
 1. API validates and atomically inserts the job, idempotency mapping, initial
    job event, and outbox event. It responds accepted only after commit.
-2. Scheduler claims eligible rows using a short database transaction and
-   publishes an at-least-once dispatch event through the outbox publisher.
+2. Outbox publisher claims eligible rows using a short database transaction,
+   commits the lease, and publishes an at-least-once dispatch event.
 3. Worker consumes the event, atomically claims/creates the next attempt,
    transitions the job to `RUNNING`, and receives a unique lease token and
    expiry. Stale tokens cannot complete a newer attempt.
@@ -292,9 +332,11 @@ guarantee that external side effects were undone.
 
 - Retry only classified transient failures; validation and permanent handler
   errors fail without retry unless workflow policy explicitly says otherwise.
-- Default planned policy: maximum 5 attempts, exponential delay
+- Worker execution retry policy: maximum 5 attempts, exponential delay
   `min(initialDelay * 2^(attempt-1), maxDelay)` plus bounded random jitter.
   Defaults remain configuration policy until product-level limits are set.
+- Outbox publication independently defaults to 8 claim attempts with
+  exponential retry from 1 second up to 5 minutes; it has no jitter yet.
 - Persist `attempt_count`, next `run_at`, failure class, and last error before
   acknowledging a failed attempt. A retry is a new attempt, never an in-place
   rewrite of attempt history.
@@ -340,8 +382,11 @@ updated progress documentation, and a Conventional Commit.
    idempotency with defined retention, transactional `JobCreated` outbox,
    database-safe concurrent submission, and PostgreSQL integration tests.
    Actual publisher/Kafka delivery remains in milestone 4.
-4. **Scheduling and Kafka dispatch:** due-work claiming, backpressure,
-   partition strategy, retry scheduling, dead-letter handling and metrics.
+4. **Scheduling and Kafka dispatch (complete):** local Kafka, versioned job
+   event contract, leased `SKIP LOCKED` outbox publisher, due-time eligibility,
+   bounded retry/terminal failure, cancellation handling, metrics, and
+   PostgreSQL/Kafka Testcontainers integration tests. Worker execution and
+   consuming events remain milestone 5.
 5. **Worker runtime and recovery:** handler contract, attempt/lease fencing,
    heartbeat, cancellation, transient/permanent failure classification,
    crash/lease-expiry recovery tests.

@@ -1,5 +1,8 @@
 # FlowForge
 
+**Durable, observable background job orchestration built with Spring Boot,
+PostgreSQL, Kafka, and React.**
+
 FlowForge is a distributed workflow orchestration platform for defining,
 submitting, scheduling, and observing durable background jobs. The control
 plane uses Java 21 and Spring Boot with PostgreSQL persistence, a versioned job
@@ -31,6 +34,47 @@ The reproducible end-to-end runtime demonstration and observed verification
 evidence are in [docs/E2E_DEMO.md](docs/E2E_DEMO.md).
 The dashboard screenshots below were captured from the running UI connected to
 the local control plane.
+
+```mermaid
+flowchart LR
+    User[Operator] -->|OIDC PKCE| Keycloak[Keycloak]
+    User --> Dashboard[React dashboard]
+    Dashboard -->|Bearer JWT| API[Spring Boot control plane]
+    API -->|jobs and outbox transaction| DB[(PostgreSQL)]
+    DB -->|leased outbox events| Publisher[Outbox publisher]
+    Publisher --> Kafka[(Apache Kafka)]
+    Kafka -->|versioned JobCreated event| Worker[Scalable worker service]
+    Worker -->|claims, attempts, results| DB
+    Prometheus[Prometheus] -. metrics .-> API
+    Prometheus -. metrics .-> Worker
+    Grafana[Grafana] -. dashboards .-> Prometheus
+```
+
+### Engineering highlights
+
+- Durable job state, scheduling metadata, ownership, and execution attempts in
+  PostgreSQL with additive Flyway migrations.
+- Transactional idempotent submission and outbox publication with bounded
+  retries, claim leases, and crash recovery.
+- Independently scalable Kafka workers with atomic claims, heartbeats, fencing
+  tokens, cooperative cancellation, and retryable/permanent failure handling.
+- Keycloak OIDC Authorization Code + PKCE, JWT issuer/audience/signature
+  validation, ADMIN/OPERATOR/VIEWER roles, and per-user job ownership.
+- Responsive React/TypeScript dashboard with live job polling and API-backed
+  lifecycle controls.
+- Local Docker Compose stack and automated Maven, Testcontainers, and frontend
+  verification.
+
+## Technology
+
+| Area | Technologies |
+| --- | --- |
+| Control plane and workers | Java 21, Spring Boot 3, Maven |
+| Persistence and migrations | PostgreSQL 16, Spring Data JPA, JDBC, Flyway |
+| Messaging | Apache Kafka 3, transactional outbox |
+| Identity | Keycloak, OpenID Connect, Spring Security OAuth2 Resource Server |
+| Dashboard | React 19, TypeScript, Vite, Tailwind CSS |
+| Operations | Docker Compose, Micrometer, Prometheus/Grafana integration points |
 
 ## Repository layout
 
@@ -315,3 +359,25 @@ recorded in [docs/PROGRESS.md](docs/PROGRESS.md). Production HTTPS and
 identity-provider hardening, true tenant isolation, and a Maven dependency
 vulnerability scan remain outstanding; see
 [docs/SECURITY_ARCHITECTURE.md](docs/SECURITY_ARCHITECTURE.md).
+
+## Current limitations and next steps
+
+Implemented scope is job orchestration, not a workflow-definition engine:
+there are no DAGs, visual workflow authoring, or distributed workflow
+transactions. Ownership is per user and does not provide tenant isolation.
+Delivery and handler execution are at least once; external side effects require
+idempotent handlers or downstream idempotency. Running cancellation is
+cooperative, and a custom handler that ignores cancellation may continue until
+it returns or loses its lease. Prometheus/Grafana are integration points rather
+than a provisioned monitoring stack. Production hosting, HTTPS/identity
+provider hardening, audit and retention policies, and a Maven dependency
+vulnerability scan remain future work. No throughput or latency benchmark is
+claimed.
+
+## CI
+
+GitHub Actions runs `mvn -B -ntp clean verify` with Java 21 and the dashboard
+lint, typecheck, tests, and production build with Node.js 22 on pushes and pull
+requests to `main`. Backend integration tests use Testcontainers and the
+GitHub-hosted Linux runner's Docker service; CI uses normal Docker API
+negotiation without local compatibility overrides.

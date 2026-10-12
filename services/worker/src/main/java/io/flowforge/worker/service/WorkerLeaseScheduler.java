@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 @Component
 public class WorkerLeaseScheduler {
@@ -65,7 +66,15 @@ public class WorkerLeaseScheduler {
         }
         LOGGER.atInfo().addKeyValue("claimedJobs", claims.size()).log("Claimed recoverable jobs");
         for (JobExecutionClaim claim : claims) {
-            executionExecutor.execute(() -> executionService.execute(claim));
+            try {
+                executionExecutor.execute(() -> executionService.execute(claim));
+            } catch (RejectedExecutionException exception) {
+                var releaseResult = store.releaseUnstartedClaim(claim);
+                LOGGER.atWarn()
+                        .addKeyValue("jobId", claim.jobId())
+                        .addKeyValue("releaseResult", releaseResult)
+                        .log("Worker executor rejected a recovered job; released its claim");
+            }
         }
     }
 }

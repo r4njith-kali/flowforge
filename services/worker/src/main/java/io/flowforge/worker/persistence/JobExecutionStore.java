@@ -73,6 +73,48 @@ public class JobExecutionStore {
         });
     }
 
+    public ReleaseResult releaseUnstartedClaim(JobExecutionClaim claim) {
+        return transactionTemplate.execute(status -> {
+            List<String> updated = jdbcTemplate.query("""
+                    UPDATE jobs
+                    SET status = CASE WHEN cancel_requested_at IS NULL THEN 'DISPATCHED' ELSE 'CANCELLED' END,
+                        attempt_count = attempt_count - 1,
+                        completed_at = CASE
+                            WHEN cancel_requested_at IS NULL THEN completed_at
+                            ELSE clock_timestamp()
+                        END,
+                        updated_at = clock_timestamp(),
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
+                        version = version + 1
+                    WHERE id = ? AND status = 'RUNNING'
+                      AND attempt_count = ? AND lease_owner = ? AND fencing_token = ?
+                      AND lease_expires_at > clock_timestamp()
+                    RETURNING status
+                    """, (resultSet, rowNumber) -> resultSet.getString("status"),
+                    claim.jobId(),
+                    claim.attemptNumber(),
+                    claim.workerId(),
+                    claim.fencingToken());
+            if (updated.isEmpty()) {
+                return ReleaseResult.LOST_OWNERSHIP;
+            }
+            if ("CANCELLED".equals(updated.getFirst())) {
+                jdbcTemplate.update("""
+                        UPDATE job_attempts
+                        SET status = 'CANCELLED', finished_at = clock_timestamp()
+                        WHERE job_id = ? AND attempt_number = ? AND fencing_token = ? AND status = 'RUNNING'
+                        """, claim.jobId(), claim.attemptNumber(), claim.fencingToken());
+                return ReleaseResult.CANCELLED;
+            }
+            jdbcTemplate.update("""
+                    DELETE FROM job_attempts
+                    WHERE job_id = ? AND attempt_number = ? AND fencing_token = ? AND status = 'RUNNING'
+                    """, claim.jobId(), claim.attemptNumber(), claim.fencingToken());
+            return ReleaseResult.RELEASED;
+        });
+    }
+
     private Optional<JobExecutionClaim> claimLocked(
             UUID jobId,
             String workerId,
@@ -376,6 +418,12 @@ public class JobExecutionStore {
     public enum FailureResult {
         RETRY_SCHEDULED,
         TERMINAL,
+        CANCELLED,
+        LOST_OWNERSHIP
+    }
+
+    public enum ReleaseResult {
+        RELEASED,
         CANCELLED,
         LOST_OWNERSHIP
     }

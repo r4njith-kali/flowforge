@@ -8,6 +8,7 @@ import io.flowforge.worker.messaging.JobCreatedListener;
 import io.flowforge.worker.persistence.JobExecutionStore;
 import io.flowforge.worker.service.JobExecutionService;
 import io.flowforge.worker.service.WorkerIdentity;
+import io.flowforge.worker.service.WorkerLeaseScheduler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +32,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -219,6 +221,32 @@ class JobExecutionIntegrationTest {
         assertThat(store.claimRecoverable("worker-restart", 10, Duration.ofSeconds(30), 100)).isEmpty();
         assertThat(jobStatus(jobId)).isEqualTo("FAILED");
         assertThat(attemptStatus(jobId, 1)).isEqualTo("ABANDONED");
+    }
+
+    @Test
+    void rejectedRecoveryTaskReleasesItsClaimWithoutConsumingAnAttempt() {
+        UUID jobId = createJob("demo.echo", Map.of(), 3, null);
+        var scheduler = new WorkerLeaseScheduler(
+                store,
+                executionService,
+                workerIdentity,
+                command -> {
+                    throw new RejectedExecutionException("test executor is saturated");
+                },
+                Duration.ofSeconds(30),
+                100,
+                5000,
+                10);
+
+        scheduler.recoverExpiredAndRetryableJobs();
+
+        assertThat(jobStatus(jobId)).isEqualTo("DISPATCHED");
+        assertThat(attemptCount(jobId)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM job_attempts WHERE job_id = ?", Integer.class, jobId))
+                .isZero();
+        assertThat(store.claim(jobId, "worker-after-rejection", Duration.ofSeconds(30), 100))
+                .isPresent();
     }
 
     @Test

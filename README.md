@@ -5,7 +5,8 @@ submitting, scheduling, and observing durable background jobs. The control
 plane uses Java 21 and Spring Boot with PostgreSQL persistence, a versioned job
 management API, and transactional outbox publication to Apache Kafka. A
 separate Spring Boot worker service consumes dispatch events and executes
-registered job handlers. Redis and the React/TypeScript operator UI remain
+registered job handlers. The React/TypeScript operator dashboard provides live
+job visibility and lifecycle controls; Redis and workflow authoring remain
 planned components.
 
 ## Architecture at a glance
@@ -23,12 +24,14 @@ architecture, service boundaries, data model, lifecycle, and roadmap.
 Milestone status is tracked in [docs/PROGRESS.md](docs/PROGRESS.md).
 The reproducible end-to-end runtime demonstration and observed verification
 evidence are in [docs/E2E_DEMO.md](docs/E2E_DEMO.md).
+The dashboard screenshots below were captured from the running UI connected to
+the local control plane.
 
 ## Repository layout
 
 ```text
 apps/
-  web/                         React + TypeScript operator console (planned)
+  web/                         React + TypeScript Vite operator dashboard
 services/
   control-plane/               Spring Boot HTTP API and PostgreSQL job store
   scheduler/                   Scheduling currently runs in control-plane outbox polling
@@ -49,6 +52,7 @@ docs/
 - JDK 21
 - Apache Maven 3.9 or newer
 - Docker Engine with Docker Compose v2 (for PostgreSQL and Testcontainers)
+- Node.js 20.19+ or 22.12+ and npm (for the dashboard; Vite 8 requirement)
 
 The current development environment has OpenJDK 25.0.1 rather than JDK 21;
 Maven compiles both services with `--release 21`. A JDK 21 runtime was not
@@ -122,6 +126,53 @@ docker compose --env-file .env -f infra/docker/compose.yaml \
 Compose gives container workers the internal Kafka listener
 (`kafka:29092`) and PostgreSQL service address; it retains `localhost:9092`
 for host-based applications.
+
+## React dashboard
+
+Start the control plane and local dependencies as described above, then in a
+second terminal run:
+
+```bash
+cd apps/web
+npm ci
+cp .env.example .env.local
+npm run dev
+```
+
+Open <http://localhost:5173>. Vite proxies `/api`, `/actuator`, Swagger UI, and
+OpenAPI requests to `VITE_API_PROXY_TARGET` (default
+`http://localhost:8080`). Set `VITE_REFRESH_INTERVAL_MS` to `5000`, `15000`, or
+`30000` to choose the initial polling interval; it can also be changed from
+the dashboard header. `.env.local` is for local configuration and must not
+contain credentials.
+
+Frontend checks:
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+The dashboard supports API-backed overview counts, job filtering/sorting and
+pagination, job creation (including optional idempotency key and scheduling),
+job detail polling, and cancellation. The current `JobResponse` does not
+expose worker result data or attempt history, so the detail view explicitly
+reports those as unavailable; its timeline includes only API-provided
+timestamps. A live UI-created `demo.echo` job completed as
+`f777c2dc-5748-43f5-858e-204f5faf6346` with one persisted attempt during
+verification.
+
+### Dashboard screenshots
+
+Overview, captured from the live dashboard and control-plane API:
+
+![FlowForge dashboard overview](docs/images/dashboard-overview.png)
+
+Job detail for the completed live `demo.echo` submission:
+
+![Completed FlowForge job detail](docs/images/dashboard-job-detail.png)
 
 ## Job API
 

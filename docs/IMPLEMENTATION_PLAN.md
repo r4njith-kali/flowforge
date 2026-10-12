@@ -6,9 +6,9 @@ FlowForge orchestrates durable, asynchronous jobs with explicit state,
 bounded retries, safe worker recovery, and operational visibility. The
 initial increment established the repository structure and Java 21 Spring
 Boot control plane; the current foundation also includes job management,
-PostgreSQL persistence, Kafka outbox dispatch, and a separately scalable
-worker runtime. Workflow definitions, the operator UI, tenant authentication,
-and production infrastructure remain future work.
+PostgreSQL persistence, Kafka outbox dispatch, a separately scalable worker
+runtime, and a React/TypeScript operator dashboard. Workflow definitions,
+tenant authentication, and production infrastructure remain future work.
 
 ### Initial technology choices
 
@@ -115,9 +115,12 @@ Worker capacity is controlled independently from API capacity.
 
 ### Web console
 
-Provides operator workflows, job inspection, attempt/event history, and
-operational views. It calls the versioned control-plane API and does not
-connect directly to PostgreSQL, Kafka, or Redis.
+Provides API-backed overview counts, server-paginated job listing, job
+submission, polled job detail, and cancellation. It calls the versioned
+control-plane API and does not connect directly to PostgreSQL, Kafka, or Redis.
+The current response DTO does not expose execution result data or attempt
+history; the UI states this limitation and only builds its timeline from
+timestamps actually returned by the API.
 
 ### Platform observability
 
@@ -222,12 +225,16 @@ offset pagination and a server-side sort-field allowlist.
 | `POST /api/v1/workflows` | Create immutable workflow version (planned) | `201` |
 | `GET /api/v1/workflows/{workflowId}` | Read workflow/version (planned) | `200` |
 | `POST /api/v1/jobs` | Create an immediate or scheduled job | `201` |
-| `GET /api/v1/jobs/{jobId}` | Read current job state/result | `200` |
+| `GET /api/v1/jobs/{jobId}` | Read current job state, payload, and exposed timestamps | `200` |
 | `GET /api/v1/jobs` | List jobs with filters and bounded pagination | `200` |
 | `POST /api/v1/jobs/{jobId}/cancel` | Cancel an eligible job | `200` |
 | `GET /api/v1/jobs/{jobId}/attempts` | Read ordered attempt history (planned) | `200` |
 
-The current create request accepts `jobType`, JSON-object `payload`, optional
+The current `JobResponse` exposes `id`, `jobType`, `payload`, `status`,
+creation/update/schedule/start/completion/cancellation timestamps, attempt
+count and retry configuration, and optimistic-lock version. It does not expose
+the persisted worker result or attempt history; those API capabilities remain
+planned. The current create request accepts `jobType`, JSON-object `payload`, optional
 `scheduledAt`, `maxAttempts` (default 5, 1–100), and `retryDelaySeconds`
 (default 0, 0–86400). It returns `201 Created`, a `Location` header, and a job
 DTO. Future schedule times produce `SCHEDULED`; absent or past times produce
@@ -410,9 +417,14 @@ updated progress documentation, and a Conventional Commit.
    PostgreSQL-backed attempt history and lease/fencing, heartbeat, cooperative
    cancellation, transient/permanent failure classification, bounded retries,
    crash/lease-expiry recovery, and PostgreSQL/Kafka Testcontainers tests.
-6. **Operator UI:** React/TypeScript console, typed API client, job listing,
-   detail and attempt timeline, cancel/retry operations with accessibility and
-   UI tests.
+6. **Operator UI (complete):** React/TypeScript Vite dashboard with typed API
+   client, API-backed overview, server-side job filtering/sorting/pagination,
+   submission, live detail polling, cancellation, and accessible responsive
+   dark UI. Vitest and Testing Library cover API status handling, form
+   validation/submission, and detail behavior. The detail timeline is limited
+   to timestamps in the current DTO; attempt history, results, and retry
+   actions remain unavailable until the API exposes them. Live backend
+   verification and genuine screenshots are recorded in the README.
 7. **Production readiness:** tenant authentication/authorization, quotas,
    retention, Kafka/Redis/Prometheus/Grafana local and deployment setup, load
    and resilience tests, runbooks, and security review.

@@ -9,7 +9,7 @@ Last updated: 2026-10-13
 | 3. Idempotent submission and outbox | Complete | Optional operation-scoped idempotency with 24-hour retention; transactional `JobCreated` outbox; PostgreSQL integration coverage. Kafka publication was added in milestone 4. |
 | 4. Scheduling and Kafka dispatch | Complete | PostgreSQL-backed `SKIP LOCKED` outbox claims, Kafka acknowledgement sequencing, scheduled eligibility, bounded retries/leases, and PostgreSQL+Kafka Testcontainers coverage. |
 | 5. Worker runtime and recovery | Complete | Independent Spring Boot Maven service; Kafka dispatch consumer, PostgreSQL-fenced attempts, leases/heartbeats, cooperative cancellation, bounded retries, and lease-expiry recovery. Verified with PostgreSQL and Kafka Testcontainers. |
-| 6. Operator UI | Not started | Add React/TypeScript console and typed API client with accessibility and UI tests. |
+| 6. Operator UI | Complete | React/TypeScript Vite dashboard with server-side job management, live detail polling, accessible cancellation/submission, 11 passing UI/API tests, production build, and a live `demo.echo` verification. |
 | 7. Production readiness | Not started | Add authentication, quotas, retention, Kafka/Redis/monitoring deployment, resilience tests, and runbooks. |
 
 ## Delivered in milestone 2
@@ -128,7 +128,36 @@ Last updated: 2026-10-13
   echo job completed. See `docs/E2E_DEMO.md` for IDs, database/API evidence,
   logs, reproduction steps, and startup defects found and fixed.
 
+## Delivered in milestone 6
+
+- Added a strict TypeScript React dashboard under `apps/web/`, built with
+  Vite 8, Tailwind CSS 4, React Router, and Oxlint. Vite proxies `/api`,
+  `/actuator`, Swagger UI, and OpenAPI routes to the environment-configured
+  control-plane origin; `.env.example` contains no credentials.
+- Added overview counts derived from paginated API totals and the live
+  `/actuator/health` endpoint; recent jobs come from the list API.
+- Added a jobs table with API-side pagination, exact job-type/status filters,
+  and allowlisted sort fields; submission validates JSON object payloads and
+  supports schedule, max attempts, retry delay, and optional
+  `Idempotency-Key`.
+- Added polled job detail with actual DTO metadata and timestamp-based
+  timeline, configurable 5/15/30-second refresh, confirmation-based
+  cancellation, and explicit 200 / 202 / 409 handling. Results and attempt
+  history are marked unavailable because the current REST response does not
+  expose them. No execution events are fabricated.
+- Added responsive dark UI, semantic navigation/forms, visible focus styling,
+  keyboard-operable native controls, loading/empty/error states, and cleanup
+  of polling timers.
+- Frontend verification: `npm run lint`, `npm run typecheck`, `npm test`
+  (11 tests passed), and `npm run build` succeeded in `apps/web/`.
+- Live UI check (2026-10-13): submitted `demo.echo` from the dashboard using
+  the local control-plane and worker fleet. Job
+  `f777c2dc-5748-43f5-858e-204f5faf6346` was verified through the REST API as
+  `COMPLETED`, with `attemptCount: 1`, and persisted `startedAt` and
+  `completedAt`. Genuine live screenshots are in `docs/images/`.
+
 ## Explicitly not delivered
 
 Workflow definitions, multi-tenant authentication, Redis, provisioned
-Prometheus/Grafana dashboards, and the web console remain future milestones.
+Prometheus/Grafana dashboards, execution-result and attempt-history API
+endpoints remain future milestones.

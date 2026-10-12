@@ -6,8 +6,10 @@ plane uses Java 21 and Spring Boot with PostgreSQL persistence, a versioned job
 management API, and transactional outbox publication to Apache Kafka. A
 separate Spring Boot worker service consumes dispatch events and executes
 registered job handlers. The React/TypeScript operator dashboard provides live
-job visibility and lifecycle controls; Redis and workflow authoring remain
-planned components.
+job visibility and lifecycle controls. Browser users authenticate through
+Keycloak OIDC; the control plane validates signed access tokens and enforces
+roles plus per-user job ownership. Redis and workflow authoring remain planned
+components.
 
 ## Architecture at a glance
 
@@ -22,6 +24,9 @@ caching.
 See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the
 architecture, service boundaries, data model, lifecycle, and roadmap.
 Milestone status is tracked in [docs/PROGRESS.md](docs/PROGRESS.md).
+Authentication and local identity-provider setup are described in
+[docs/SECURITY_ARCHITECTURE.md](docs/SECURITY_ARCHITECTURE.md) and
+[docs/AUTHENTICATION_SETUP.md](docs/AUTHENTICATION_SETUP.md).
 The reproducible end-to-end runtime demonstration and observed verification
 evidence are in [docs/E2E_DEMO.md](docs/E2E_DEMO.md).
 The dashboard screenshots below were captured from the running UI connected to
@@ -40,7 +45,7 @@ libs/
   contracts/events/            Versioned Kafka event JSON schemas
   java-common/                 Shared Java primitives (planned)
 infra/
-  docker/                      PostgreSQL, Kafka, and worker local Compose configuration
+  docker/                      PostgreSQL, Kafka, Keycloak, and worker local Compose configuration
   monitoring/                  Prometheus/Grafana configuration (planned)
 docs/
   IMPLEMENTATION_PLAN.md
@@ -58,26 +63,30 @@ The current development environment has OpenJDK 25.0.1 rather than JDK 21;
 Maven compiles both services with `--release 21`. A JDK 21 runtime was not
 available for direct execution testing here.
 
-## Start PostgreSQL and Kafka locally
+## Start PostgreSQL, Kafka, and Keycloak locally
 
 From the repository root, create a local environment file and set a private
 development password:
 
 ```bash
-cp .env.example .env
-# Edit POSTGRES_PASSWORD and DB_PASSWORD in .env to the same local value.
-docker compose --env-file .env -f infra/docker/compose.yaml up -d postgres kafka
+cp -n .env.example .env
+# Replace the PostgreSQL and Keycloak development-password placeholders.
+docker compose --env-file .env -f infra/docker/compose.yaml up -d postgres kafka keycloak
 set -a
 source .env
 set +a
 ```
 
 `.env` is ignored by Git. Compose requires `POSTGRES_DB`, `POSTGRES_USER`, and
-`POSTGRES_PASSWORD`; the application reads `DB_URL`, `DB_USERNAME`, and
-`DB_PASSWORD`. Kafka uses `KAFKA_BOOTSTRAP_SERVERS` (default
-`localhost:9092`). The example file contains placeholders only. Flyway applies
-the versioned schema on application startup, and Hibernate validates mappings
-without generating or modifying schema.
+`POSTGRES_PASSWORD`; Keycloak requires a separate local-only admin password.
+If `.env` already exists, merge new settings from `.env.example` rather than
+overwriting existing local database or broker configuration.
+The application reads `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`. Kafka uses
+`KAFKA_BOOTSTRAP_SERVERS` (default `localhost:9092`). The example file contains
+placeholders only. Keycloak imports the `flowforge` realm, public SPA client,
+API audience mapper, and three role-assigned local users. Set local passwords
+for those users in the Keycloak admin console before signing in; no user or
+admin password is committed.
 If the default host ports are occupied, change `POSTGRES_PORT`, `KAFKA_PORT`,
 `DB_URL`, and `KAFKA_BOOTSTRAP_SERVERS` together in `.env`; Compose advertises
 the configured Kafka host port to host-based clients.
@@ -99,23 +108,42 @@ requires a compatibility pin, use
 optional Maven profile only affects Surefire tests. CI should use normal Docker
 API negotiation and must not depend on this local override.
 
-Start the control plane once so Flyway applies the schema migrations (including
-worker attempt and lease tables):
+Wait for Keycloak to expose the FlowForge realm, then start the control plane
+so Flyway applies the schema migrations (including ownership and worker
+attempt/lease tables):
 
 ```bash
+curl http://localhost:8180/realms/flowforge/.well-known/openid-configuration
 mvn -pl services/control-plane spring-boot:run
 ```
 
-The control plane binds to port `8080`. Check readiness and API documentation:
+The control plane binds to port `8080`. Its job API and Swagger UI require a
+valid Keycloak access token; only the health/readiness endpoints are public.
+Check readiness and API documentation:
 
 ```bash
 curl http://localhost:8080/actuator/health
 open http://localhost:8080/swagger-ui/index.html
 ```
 
-The OpenAPI JSON is available at `/v3/api-docs`. The worker service uses the
-same database schema, so start it only after the control plane has applied the
-migrations. Run a local worker in another terminal with
+The OpenAPI JSON is available at `/v3/api-docs` to authenticated users. The
+dashboard uses Authorization Code with PKCE, keeps OIDC state in browser
+`sessionStorage` (not `localStorage`), and calls the API with bearer tokens.
+ADMIN can access all jobs; OPERATOR can submit and manage their own jobs;
+VIEWER can read their own jobs. See the
+[security architecture](docs/SECURITY_ARCHITECTURE.md) for the full role
+matrix, ownership boundary, and security limitations.
+After setting local passwords in Keycloak, run the web dashboard:
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. The worker service uses the same database schema,
+so start it only after the control plane has applied the migrations. Run a
+local worker in another terminal with
 `mvn -pl services/worker spring-boot:run`, or scale Compose workers:
 
 ```bash
@@ -192,8 +220,9 @@ range 1–100), and `retryDelaySeconds` (default 0, range 0–86400). A future
 a `PENDING` job. The optional `Idempotency-Key` header makes repeated
 equivalent submissions return the original job; using the same key with
 different content returns `409 Conflict`. Keys are scoped to
-`POST:/api/v1/jobs` and retained for 24 hours. This API is currently
-single-tenant: tenant scoping must be added before multi-tenant deployment.
+`POST:/api/v1/jobs` and the validated user's issuer/subject, and retained for
+24 hours. Ownership is user-scoped, not tenant-scoped; tenant isolation must
+be implemented before multi-tenant deployment.
 Cancellation is idempotent for already-cancelled jobs and remains available
 while a job is pending, scheduled, or in the publisher's `DISPATCHING` phase.
 For a running job it records `cancelRequestedAt` and returns `202 Accepted`;
@@ -278,5 +307,11 @@ systems. Cancellation is cooperative: the API reports the outstanding request
 with HTTP `202`, but a custom handler that does not check its context may
 continue until it returns or loses its lease. The control plane owns Flyway
 migrations; apply them before starting workers. Workflow definitions,
-authentication, tenant isolation, Redis, and provisioned Prometheus/Grafana
-dashboards remain future work.
+tenant isolation, Redis, and provisioned Prometheus/Grafana dashboards remain
+future work. User OIDC authentication and job ownership are implemented but
+verified locally with Keycloak, PostgreSQL, Kafka, and workers. The full
+Maven/Testcontainers, Compose, frontend, and live role-check evidence is
+recorded in [docs/PROGRESS.md](docs/PROGRESS.md). Production HTTPS and
+identity-provider hardening, true tenant isolation, and a Maven dependency
+vulnerability scan remain outstanding; see
+[docs/SECURITY_ARCHITECTURE.md](docs/SECURITY_ARCHITECTURE.md).

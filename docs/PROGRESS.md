@@ -10,7 +10,8 @@ Last updated: 2026-10-13
 | 4. Scheduling and Kafka dispatch | Complete | PostgreSQL-backed `SKIP LOCKED` outbox claims, Kafka acknowledgement sequencing, scheduled eligibility, bounded retries/leases, and PostgreSQL+Kafka Testcontainers coverage. |
 | 5. Worker runtime and recovery | Complete | Independent Spring Boot Maven service; Kafka dispatch consumer, PostgreSQL-fenced attempts, leases/heartbeats, cooperative cancellation, bounded retries, and lease-expiry recovery. Verified with PostgreSQL and Kafka Testcontainers. |
 | 6. Operator UI | Complete | React/TypeScript Vite dashboard with server-side job management, live detail polling, accessible cancellation/submission, 11 passing UI/API tests, production build, and a live `demo.echo` verification. |
-| 7. Production readiness | Not started | Add authentication, quotas, retention, Kafka/Redis/monitoring deployment, resilience tests, and runbooks. |
+| 7A. User authentication and authorization | Complete | Full Maven/Testcontainers verification: 70 tests passed. Frontend lint, strict typecheck, 19 tests, and production build passed. Compose config and local Keycloak realm validated; live PKCE login, API ownership/role checks, authenticated operator submission, and worker completion verified. `npm audit` reported 0 known vulnerabilities; Maven vulnerability scanning and production hardening remain follow-up work. |
+| 7B. Production readiness and tenant isolation | Planned | Add true tenant-scoped isolation, quotas, audit/retention policies, deployment monitoring, resilience tests, and runbooks after 7A acceptance. |
 
 ## Delivered in milestone 2
 
@@ -40,7 +41,8 @@ Last updated: 2026-10-13
   Kafka publisher.
 - Idempotency keys are retained for 24 hours; expired keys may be reused, and
   an hourly scheduled cleanup removes expired records. Keys are scoped to
-  `POST:/api/v1/jobs`, not to a tenant. Add tenant scoping before enabling
+  `POST:/api/v1/jobs`. Milestone 7A further scopes them to the validated
+  user's `(iss, sub)`; explicit tenant scope is still required before any
   multi-tenant use.
 - Outbox delivery is at least once, so consumers and external side effects
   must be idempotent; exactly-once distributed execution is not promised.
@@ -156,8 +158,48 @@ Last updated: 2026-10-13
   `COMPLETED`, with `attemptCount: 1`, and persisted `startedAt` and
   `completedAt`. Genuine live screenshots are in `docs/images/`.
 
+## Delivered in milestone 7A
+
+- Keycloak 26.3 local realm import defines the `flowforge-web` public client
+  with Authorization Code + PKCE, an explicit stable-user-ID `sub` mapper, the
+  `flowforge-api` audience, ADMIN,
+  OPERATOR, and VIEWER roles, and local users without committed passwords.
+- The control plane uses Spring Security OAuth2 Resource Server, stateless
+  bearer authentication, trusted issuer/JWKS, audience, time, and non-empty
+  subject validation, exact Keycloak realm-role allowlisting, JSON Problem
+  Details for 401/403, a single-origin credential-free CORS policy, and
+  protected API/OpenAPI routes. Health remains public; only health is exposed
+  through Actuator.
+- Additive Flyway V5 adds `(owner_issuer, owner_subject)` for jobs and
+  identity-scoped idempotency keys. ADMIN can access all jobs (including
+  historical unowned rows); OPERATOR and VIEWER are restricted to their own
+  jobs, with submit/cancel limited to OPERATOR and ADMIN. Workers remain
+  independent of browser authentication.
+- The React SPA uses `oidc-client-ts`, Authorization Code + PKCE,
+  `sessionStorage` rather than `localStorage`, token renewal/expiry handling,
+  logout, bearer API requests, protected routes, and role-gated UI actions.
+  Authorization-code callback handling is single-flight under React
+  StrictMode, avoiding duplicate redemption of one-time codes.
+- `mvn -B -ntp clean verify -Dtestcontainers.docker-api-version=1.40`
+  passed 70 tests (control plane and worker) with Java 25.0.1 targeting Java
+  21. The local Docker daemon required that Testcontainers API compatibility
+  override; CI should use its normal Docker API negotiation.
+- Frontend `npm run lint`, `npm run typecheck`, `npm test` (19 tests across
+  6 files), and `npm run build` passed. `npm audit` reported 0 known
+  vulnerabilities. Docker Compose validation passed; Flyway validated V1–V5.
+- Live local verification: unauthenticated job listing returned 401. An
+  OPERATOR completed Authorization Code + PKCE login, submitted
+  `demo.echo` job `bf4ed6ae-2a1a-46ca-bc05-85336bef609d` through the dashboard,
+  and observed it reach `COMPLETED` with one attempt through the worker fleet.
+  A fresh VIEWER login listed zero owned jobs, received 403 for create and
+  cancel, and received 404 when requesting the OPERATOR-owned job. The
+  dashboard hid job creation and showed the access-denied route for VIEWER.
+- A Maven dependency vulnerability scan was not run. Production HTTPS,
+  deployed-IdP configuration, managed secrets, auditing/rate limiting, and
+  genuine tenant isolation remain outside 7A.
+
 ## Explicitly not delivered
 
-Workflow definitions, multi-tenant authentication, Redis, provisioned
+Workflow definitions, tenant isolation, Redis, provisioned
 Prometheus/Grafana dashboards, execution-result and attempt-history API
 endpoints remain future milestones.

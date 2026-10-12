@@ -7,8 +7,10 @@ import { JobTable } from '../components/JobTable'
 import { JOB_STATUSES, type JobFilters, type JobStatus } from '../types/job'
 import { useRefreshInterval } from '../context/RefreshIntervalContext'
 import { usePollingQuery } from '../hooks/usePollingQuery'
+import { useAuth } from '../auth/AuthContext'
 
 export function JobsPage() {
+  const { canSubmit } = useAuth()
   const interval = useRefreshInterval()
   const [status, setStatus] = useState<JobStatus | ''>('')
   const [jobTypeInput, setJobTypeInput] = useState('')
@@ -58,10 +60,12 @@ export function JobsPage() {
             Search, filter, and inspect work in your orchestration system.
           </p>
         </div>
-        <Link className="button button-primary" to="/jobs/new">
-          <Icon name="plus" />
-          Submit a job
-        </Link>
+        {canSubmit && (
+          <Link className="button button-primary" to="/jobs/new">
+            <Icon name="plus" />
+            Submit a job
+          </Link>
+        )}
       </div>
 
       <section className="panel jobs-panel">
@@ -157,11 +161,11 @@ export function JobsPage() {
           </>
         ) : (
           <EmptyState
-            action={
+            action={canSubmit ? (
               <Link className="button button-secondary" to="/jobs/new">
                 Submit a job
               </Link>
-            }
+            ) : undefined}
             description={
               status || jobType
                 ? 'Try clearing or changing your filters.'

@@ -6,6 +6,7 @@ import {
   configuredRefreshInterval,
 } from '../context/RefreshIntervalContext'
 import { Icon } from './Icon'
+import { useAuth } from '../auth/AuthContext'
 
 const navItems = [
   { label: 'Overview', to: '/', icon: 'activity' as const, end: true },
@@ -17,6 +18,7 @@ function intervalLabel(interval: number): string {
 }
 
 export function DashboardLayout() {
+  const { user, roles, logout } = useAuth()
   const [refreshInterval, setRefreshInterval] = useState(
     configuredRefreshInterval,
   )
@@ -56,12 +58,13 @@ export function DashboardLayout() {
               API documentation
             </a>
             <div className="sidebar-user">
-              <span className="avatar">FF</span>
-              <span>
-                <strong>FlowForge</strong>
-                <small>Local workspace</small>
+              <span className="avatar">
+                {(user?.profile.preferred_username ?? 'FF').slice(0, 2).toUpperCase()}
               </span>
-              <Icon name="settings" />
+              <span>
+                <strong>{user?.profile.preferred_username ?? 'FlowForge user'}</strong>
+                <small>{roles.join(', ') || 'No assigned role'}</small>
+              </span>
             </div>
           </div>
         </aside>
@@ -74,6 +77,16 @@ export function DashboardLayout() {
               <strong>Operations</strong>
             </div>
             <div className="topbar-actions">
+              <span className="user-role">
+                {roles.join(', ') || 'No assigned role'}
+              </span>
+              <button
+                className="button button-secondary sign-out-button"
+                onClick={() => void logout()}
+                type="button"
+              >
+                Sign out
+              </button>
               <label className="refresh-control">
                 <Icon name="refresh" />
                 <span className="refresh-label">Refresh</span>

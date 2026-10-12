@@ -7,6 +7,7 @@ import { StatusBadge } from '../components/StatusBadge'
 import { useRefreshInterval } from '../context/RefreshIntervalContext'
 import { usePollingQuery } from '../hooks/usePollingQuery'
 import type { Job, JobStatus } from '../types/job'
+import { useAuth } from '../auth/AuthContext'
 
 const terminalStatuses: JobStatus[] = ['COMPLETED', 'FAILED', 'CANCELLED']
 
@@ -86,6 +87,7 @@ function MetadataRow({ label, value }: { label: string; value: string }) {
 }
 
 export function JobDetailPage() {
+  const { canCancel } = useAuth()
   const { id = '' } = useParams()
   const location = useLocation()
   const interval = useRefreshInterval()
@@ -152,7 +154,7 @@ export function JobDetailPage() {
   }
   if (!job) return null
 
-  const canCancel = !terminalStatuses.includes(job.status)
+  const canCancelJob = canCancel && !terminalStatuses.includes(job.status)
   const timeline = timelineItems(job)
 
   return (
@@ -190,7 +192,7 @@ export function JobDetailPage() {
         </div>
         <div className="detail-actions">
           <StatusBadge status={job.status} />
-          {canCancel && (
+          {canCancelJob && (
             <button
               className="button button-danger"
               disabled={isCancelling}

@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cancelJob, createJob, listJobs } from './client'
+import {
+  cancelJob,
+  createJob,
+  listJobs,
+  registerAuthentication,
+} from './client'
 import type { Job } from '../types/job'
 
 const job: Job = {
@@ -120,5 +125,53 @@ describe('job API client', () => {
       code: 'JOB_STATE_CONFLICT',
       message: 'Job cannot be cancelled in its current state',
     })
+  })
+
+  it('attaches bearer tokens without sending browser cookies', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [], page: 0, size: 20 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const unregister = registerAuthentication(() => 'access-token', () => undefined)
+
+    await listJobs()
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(new Headers(init.headers).get('Authorization')).toBe('Bearer access-token')
+    expect(init.credentials).toBe('omit')
+    unregister()
+  })
+
+  it('translates forbidden responses into a clear permission message', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ title: 'Forbidden', code: 'FORBIDDEN' }),
+          { status: 403, headers: { 'Content-Type': 'application/problem+json' } },
+        ),
+      ),
+    )
+
+    await expect(createJob({ jobType: 'demo.echo', payload: {} }))
+      .rejects.toMatchObject({
+        status: 403,
+        message: 'Your account does not have permission to perform this action.',
+      })
+  })
+
+  it('notifies the auth provider when the API rejects an expired token', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response('{}', { status: 401 }),
+    ))
+    const onUnauthorized = vi.fn()
+    const unregister = registerAuthentication(() => 'expired-token', onUnauthorized)
+
+    await expect(listJobs()).rejects.toMatchObject({ status: 401 })
+    expect(onUnauthorized).toHaveBeenCalledOnce()
+    unregister()
   })
 })

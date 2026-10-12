@@ -7,6 +7,7 @@ import { JobTable } from '../components/JobTable'
 import { useRefreshInterval } from '../context/RefreshIntervalContext'
 import { usePollingQuery } from '../hooks/usePollingQuery'
 import type { JobPage } from '../types/job'
+import { useAuth } from '../auth/AuthContext'
 
 interface OverviewData {
   recent: JobPage
@@ -64,6 +65,7 @@ function MetricCard({
 }
 
 export function OverviewPage() {
+  const { canSubmit } = useAuth()
   const { data, error, isLoading, refresh } = useOverview()
   const health = usePollingQuery(
     getControlPlaneHealth,
@@ -80,10 +82,12 @@ export function OverviewPage() {
             Monitor your jobs and execution activity from one place.
           </p>
         </div>
-        <Link className="button button-primary" to="/jobs/new">
-          <Icon name="plus" />
-          Submit a job
-        </Link>
+        {canSubmit && (
+          <Link className="button button-primary" to="/jobs/new">
+            <Icon name="plus" />
+            Submit a job
+          </Link>
+        )}
       </div>
 
       <section aria-label="System status" className="system-banner">
@@ -176,11 +180,11 @@ export function OverviewPage() {
           />
         ) : (
           <EmptyState
-            action={
+            action={canSubmit ? (
               <Link className="button button-secondary" to="/jobs/new">
                 Submit your first job
               </Link>
-            }
+            ) : undefined}
             description="New jobs will appear here as soon as they are submitted."
             title="No jobs yet"
           />

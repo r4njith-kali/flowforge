@@ -25,20 +25,56 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+type AccessTokenProvider = () => string | null
+type UnauthorizedHandler = () => void | Promise<void>
+
+let accessTokenProvider: AccessTokenProvider = () => null
+let unauthorizedHandler: UnauthorizedHandler = () => undefined
+
+export function registerAuthentication(
+  getAccessToken: AccessTokenProvider,
+  onUnauthorized: UnauthorizedHandler,
+): () => void {
+  accessTokenProvider = getAccessToken
+  unauthorizedHandler = onUnauthorized
+  return () => {
+    if (accessTokenProvider === getAccessToken) {
+      accessTokenProvider = () => null
+      unauthorizedHandler = () => undefined
+    }
+  }
+}
+
+async function authenticatedFetch(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers)
+  headers.set('Accept', headers.get('Accept') ?? 'application/json')
+  if (init?.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+  const accessToken = accessTokenProvider()
+  if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
+
   const response = await fetch(path, {
     ...init,
-    headers: {
-      Accept: 'application/json',
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
+    credentials: 'omit',
+    headers,
   })
+  if (response.status === 401 && accessToken) await unauthorizedHandler()
+  return response
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await authenticatedFetch(path, init)
 
   if (!response.ok) {
     const problem = (await response.json().catch(() => ({}))) as ApiProblem
+    const message = response.status === 401
+      ? 'Your sign-in session is no longer valid. Sign in again to continue.'
+      : response.status === 403
+        ? 'Your account does not have permission to perform this action.'
+        : problem.detail ?? problem.title ?? `Request failed (${response.status})`
     throw new ApiError(
-      problem.detail ?? problem.title ?? `Request failed (${response.status})`,
+      message,
       response.status,
       problem.code,
       problem,
@@ -78,18 +114,22 @@ export type CancellationResult = {
 }
 
 export async function cancelJob(id: string): Promise<CancellationResult> {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `/api/v1/jobs/${encodeURIComponent(id)}/cancel`,
     {
       method: 'POST',
-      headers: { Accept: 'application/json' },
     },
   )
 
   if (!response.ok) {
     const problem = (await response.json().catch(() => ({}))) as ApiProblem
+    const message = response.status === 401
+      ? 'Your sign-in session is no longer valid. Sign in again to continue.'
+      : response.status === 403
+        ? 'Your account does not have permission to cancel this job.'
+        : problem.detail ?? problem.title ?? `Request failed (${response.status})`
     throw new ApiError(
-      problem.detail ?? problem.title ?? `Request failed (${response.status})`,
+      message,
       response.status,
       problem.code,
       problem,

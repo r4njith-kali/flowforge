@@ -15,6 +15,9 @@ vi.mock('../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/client')>()
   return { ...actual, cancelJob, getJob }
 })
+vi.mock('../auth/AuthContext', () => ({
+  useAuth: () => ({ canCancel: true }),
+}))
 
 const runningJob: Job = {
   id: '8f32f376-b61b-4b8f-9b45-c2cb1ab2b911',

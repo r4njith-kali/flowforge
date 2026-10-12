@@ -11,6 +11,15 @@ spring:
     enabled: true
   jackson:
     default-property-inclusion: non_null
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
 
 management:
   endpoints:
@@ -26,3 +35,15 @@ flowforge:
   idempotency:
     retention: PT24H
     cleanup-interval-ms: 3600000
+  kafka:
+    topics:
+      job-dispatch: ${FLOWFORGE_JOB_DISPATCH_TOPIC:flowforge.job-dispatch.v1}
+    publisher:
+      enabled: ${FLOWFORGE_OUTBOX_PUBLISHER_ENABLED:true}
+      batch-size: ${FLOWFORGE_OUTBOX_BATCH_SIZE:50}
+      poll-interval-ms: ${FLOWFORGE_OUTBOX_POLL_INTERVAL_MS:1000}
+      claim-lease: ${FLOWFORGE_OUTBOX_CLAIM_LEASE:PT1M}
+      send-timeout: ${FLOWFORGE_KAFKA_SEND_TIMEOUT:PT10S}
+      max-attempts: ${FLOWFORGE_OUTBOX_MAX_ATTEMPTS:8}
+      retry-base-delay: ${FLOWFORGE_OUTBOX_RETRY_BASE_DELAY:PT1S}
+      retry-max-delay: ${FLOWFORGE_OUTBOX_RETRY_MAX_DELAY:PT5M}

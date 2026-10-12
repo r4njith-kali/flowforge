@@ -21,3 +21,8 @@ management:
     health:
       probes:
         enabled: true
+
+flowforge:
+  idempotency:
+    retention: PT24H
+    cleanup-interval-ms: 3600000

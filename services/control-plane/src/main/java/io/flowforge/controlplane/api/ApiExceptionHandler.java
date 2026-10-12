@@ -1,5 +1,7 @@
 package io.flowforge.controlplane.api;
 
+import io.flowforge.controlplane.idempotency.api.InvalidIdempotencyKeyException;
+import io.flowforge.controlplane.idempotency.domain.IdempotencyConflictException;
 import io.flowforge.controlplane.job.api.InvalidJobQueryException;
 import io.flowforge.controlplane.job.domain.InvalidJobStateException;
 import io.flowforge.controlplane.job.domain.JobNotFoundException;
@@ -25,9 +27,23 @@ public class ApiExceptionHandler {
         return problem(HttpStatus.NOT_FOUND, "JOB_NOT_FOUND", exception.getMessage(), request);
     }
 
-    @ExceptionHandler({InvalidJobStateException.class, OptimisticLockingFailureException.class})
+    @ExceptionHandler({
+            InvalidJobStateException.class,
+            IdempotencyConflictException.class,
+            OptimisticLockingFailureException.class
+    })
     ProblemDetail handleConflict(RuntimeException exception, HttpServletRequest request) {
-        return problem(HttpStatus.CONFLICT, "JOB_STATE_CONFLICT", exception.getMessage(), request);
+        String code = exception instanceof IdempotencyConflictException
+                ? "IDEMPOTENCY_KEY_REUSED"
+                : "JOB_STATE_CONFLICT";
+        return problem(HttpStatus.CONFLICT, code, exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(InvalidIdempotencyKeyException.class)
+    ProblemDetail handleInvalidIdempotencyKey(
+            InvalidIdempotencyKeyException exception,
+            HttpServletRequest request) {
+        return problem(HttpStatus.BAD_REQUEST, "INVALID_IDEMPOTENCY_KEY", exception.getMessage(), request);
     }
 
     @ExceptionHandler(InvalidJobQueryException.class)

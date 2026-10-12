@@ -28,7 +28,7 @@ public class JobService {
     }
 
     @Transactional
-    public Job create(
+    Job create(
             String jobType,
             Map<String, Object> payload,
             Instant scheduledAt,

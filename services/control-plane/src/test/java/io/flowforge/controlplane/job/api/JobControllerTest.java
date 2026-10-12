@@ -5,6 +5,8 @@ import io.flowforge.controlplane.job.domain.InvalidJobStateException;
 import io.flowforge.controlplane.job.domain.Job;
 import io.flowforge.controlplane.job.domain.JobNotFoundException;
 import io.flowforge.controlplane.job.domain.JobStatus;
+import io.flowforge.controlplane.job.service.JobSubmissionResult;
+import io.flowforge.controlplane.job.service.JobSubmissionService;
 import io.flowforge.controlplane.job.service.JobService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,15 +47,15 @@ class JobControllerTest {
     @MockitoBean
     private JobService jobService;
 
+    @MockitoBean
+    private JobSubmissionService jobSubmissionService;
+
     @Test
     void createReturnsCreatedResourceAndLocation() throws Exception {
         Job job = newJob();
-        when(jobService.create(
-                eq("email.send"),
+        when(jobSubmissionService.submit(
                 any(),
-                eq(null),
-                eq(null),
-                eq(null))).thenReturn(job);
+                eq(null))).thenReturn(new JobSubmissionResult(job, false));
 
         mockMvc.perform(post("/api/v1/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -85,6 +87,18 @@ class JobControllerTest {
                 .andExpect(jsonPath("$.type").value("about:blank"))
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.errors.length()").value(2));
+    }
+
+    @Test
+    void createRejectsInvalidIdempotencyKey() throws Exception {
+        mockMvc.perform(post("/api/v1/jobs")
+                        .header("Idempotency-Key", " ")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"jobType":"email.send","payload":{}}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_IDEMPOTENCY_KEY"));
     }
 
     @Test

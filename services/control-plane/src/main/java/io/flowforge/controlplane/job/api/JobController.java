@@ -1,7 +1,9 @@
 package io.flowforge.controlplane.job.api;
 
+import io.flowforge.controlplane.idempotency.api.InvalidIdempotencyKeyException;
 import io.flowforge.controlplane.job.domain.JobStatus;
 import io.flowforge.controlplane.job.service.JobService;
+import io.flowforge.controlplane.job.service.JobSubmissionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,20 +34,24 @@ public class JobController {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final JobService jobService;
+    private final JobSubmissionService jobSubmissionService;
 
-    public JobController(JobService jobService) {
+    public JobController(JobService jobService, JobSubmissionService jobSubmissionService) {
         this.jobService = jobService;
+        this.jobSubmissionService = jobSubmissionService;
     }
 
     @PostMapping
     @Operation(summary = "Create a job")
-    public ResponseEntity<JobResponse> create(@Valid @RequestBody CreateJobRequest request) {
-        var job = jobService.create(
-                request.jobType(),
-                request.payload(),
-                request.scheduledAt(),
-                request.maxAttempts(),
-                request.retryDelaySeconds());
+    public ResponseEntity<JobResponse> create(
+            @Valid @RequestBody CreateJobRequest request,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey) {
+        if (idempotencyKey != null
+                && (idempotencyKey.isBlank() || idempotencyKey.length() > 255)) {
+            throw new InvalidIdempotencyKeyException();
+        }
+        var submission = jobSubmissionService.submit(request, idempotencyKey);
+        var job = submission.job();
         var location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}")
                 .buildAndExpand(job.getId())
@@ -56,13 +63,13 @@ public class JobController {
     @Operation(summary = "List jobs")
     public JobPageResponse list(
             @Parameter(description = "Filter by lifecycle status")
-            @RequestParam(required = false) JobStatus status,
+            @RequestParam(name = "status", required = false) JobStatus status,
             @Parameter(description = "Filter by exact job type")
-            @RequestParam(required = false) String jobType,
-            @RequestParam(defaultValue = "0") @Min(0) int page,
-            @RequestParam(defaultValue = "20") @Min(1) @Max(MAX_PAGE_SIZE) int size,
-            @RequestParam(defaultValue = "createdAt") String sortBy,
-            @RequestParam(defaultValue = "DESC") Sort.Direction direction) {
+            @RequestParam(name = "jobType", required = false) String jobType,
+            @RequestParam(name = "page", defaultValue = "0") @Min(0) int page,
+            @RequestParam(name = "size", defaultValue = "20") @Min(1) @Max(MAX_PAGE_SIZE) int size,
+            @RequestParam(name = "sortBy", defaultValue = "createdAt") String sortBy,
+            @RequestParam(name = "direction", defaultValue = "DESC") Sort.Direction direction) {
         if (jobType != null && (jobType.isBlank() || jobType.length() > 200)) {
             throw new InvalidJobQueryException("jobType filter must contain 1 to 200 characters");
         }
@@ -74,13 +81,13 @@ public class JobController {
 
     @GetMapping("/{id}")
     @Operation(summary = "Get a job")
-    public JobResponse get(@PathVariable UUID id) {
+    public JobResponse get(@PathVariable("id") UUID id) {
         return JobResponse.from(jobService.get(id));
     }
 
     @PostMapping("/{id}/cancel")
     @Operation(summary = "Cancel a pending or scheduled job")
-    public ResponseEntity<JobResponse> cancel(@PathVariable UUID id) {
+    public ResponseEntity<JobResponse> cancel(@PathVariable("id") UUID id) {
         return ResponseEntity.ok(JobResponse.from(jobService.cancel(id)));
     }
 

@@ -6,6 +6,7 @@ import io.flowforge.controlplane.job.domain.JobNotFoundException;
 import io.flowforge.controlplane.job.domain.JobStatus;
 import io.flowforge.controlplane.job.persistence.JobRepository;
 import io.flowforge.controlplane.job.persistence.JobSpecifications;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -13,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.sql.Timestamp;
 import java.util.Map;
 import java.util.UUID;
 
@@ -21,10 +23,12 @@ public class JobService {
 
     private final JobRepository jobRepository;
     private final Clock clock;
+    private final JdbcTemplate jdbcTemplate;
 
-    public JobService(JobRepository jobRepository, Clock clock) {
+    public JobService(JobRepository jobRepository, Clock clock, JdbcTemplate jdbcTemplate) {
         this.jobRepository = jobRepository;
         this.clock = clock;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Transactional
@@ -61,6 +65,14 @@ public class JobService {
             return job;
         }
         job.cancel(clock.instant());
+        jdbcTemplate.update("""
+                UPDATE outbox_events
+                SET cancelled_at = ?, claimed_by = NULL, claim_expires_at = NULL
+                WHERE aggregate_id = ?
+                  AND published_at IS NULL
+                  AND terminal_failure_at IS NULL
+                  AND cancelled_at IS NULL
+                """, Timestamp.from(clock.instant()), id);
         return job;
     }
 }

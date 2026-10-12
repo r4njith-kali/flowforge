@@ -89,9 +89,11 @@ public class Job {
     }
 
     public void cancel(Instant now) {
-        if (status != JobStatus.PENDING && status != JobStatus.SCHEDULED) {
+        if (status != JobStatus.PENDING
+                && status != JobStatus.SCHEDULED
+                && status != JobStatus.DISPATCHING) {
             throw new InvalidJobStateException(
-                    "Jobs can only be cancelled while PENDING or SCHEDULED");
+                    "Jobs can only be cancelled before dispatch is acknowledged");
         }
         status = JobStatus.CANCELLED;
         completedAt = now;

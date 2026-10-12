@@ -86,7 +86,7 @@ public class JobController {
     }
 
     @PostMapping("/{id}/cancel")
-    @Operation(summary = "Cancel a pending or scheduled job")
+    @Operation(summary = "Cancel a job before dispatch is acknowledged")
     public ResponseEntity<JobResponse> cancel(@PathVariable("id") UUID id) {
         return ResponseEntity.ok(JobResponse.from(jobService.cancel(id)));
     }

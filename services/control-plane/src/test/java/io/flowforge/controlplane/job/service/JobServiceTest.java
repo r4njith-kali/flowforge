@@ -5,6 +5,7 @@ import io.flowforge.controlplane.job.domain.Job;
 import io.flowforge.controlplane.job.domain.JobNotFoundException;
 import io.flowforge.controlplane.job.domain.JobStatus;
 import io.flowforge.controlplane.job.persistence.JobRepository;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.data.jpa.domain.Specification;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,13 +39,17 @@ class JobServiceTest {
     @Mock
     private JobRepository jobRepository;
 
+    @Mock
+    private JdbcTemplate jdbcTemplate;
+
     private JobService jobService;
 
     @BeforeEach
     void setUp() {
         jobService = new JobService(
                 jobRepository,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC),
+                jdbcTemplate);
     }
 
     @Test

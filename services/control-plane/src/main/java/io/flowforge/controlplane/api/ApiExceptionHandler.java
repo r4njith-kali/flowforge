@@ -59,8 +59,12 @@ public class ApiExceptionHandler {
             MethodArgumentTypeMismatchException.class,
             HttpMessageNotReadableException.class
     })
-    ProblemDetail handleInvalidRequest(Exception exception, HttpServletRequest request) {
-        return problem(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", exception.getMessage(), request);
+    ProblemDetail handleInvalidRequest(HttpServletRequest request) {
+        return problem(
+                HttpStatus.BAD_REQUEST,
+                "INVALID_REQUEST",
+                "A request parameter or JSON body is invalid",
+                request);
     }
 
     private static ProblemDetail problem(

@@ -187,32 +187,48 @@ PostgreSQL constraints and transactions enforce correctness. Redis keys may
 accelerate rate limiting, short leases, or cache reads, but PostgreSQL lease
 and version checks remain the fencing authority.
 
+The initial job API is single-tenant: the first migration omits tenant and
+workflow foreign keys because authentication and workflow definitions are
+not yet implemented. The schema above is the target model; tenant scoping and
+workflow references must be introduced through migrations before those
+features are exposed. Attempt, result/error, event, idempotency, and outbox
+tables are likewise future additive migrations; the current `jobs` table
+contains the core persisted fields required by the first REST API.
+
 ## 6. API contracts
 
-All routes are versioned under `/api/v1`, use JSON, and require tenant
-authentication once authentication is introduced. Errors use a stable
-problem response (`type`, `title`, `status`, `detail`, `instance`, and
-optional `code`). Pagination uses opaque `cursor` and bounded `limit`.
+All routes are versioned under `/api/v1` and use JSON. Tenant authentication
+is a production-readiness requirement and is not implemented in the current
+single-tenant API. Errors use RFC-style Problem Details (`type`, `title`,
+`status`, `detail`, `instance`, and a stable `code` extension); validation
+errors also include field-level details. Current job listing uses bounded
+offset pagination and a server-side sort-field allowlist.
 
-### Planned endpoints
+### Implemented job routes and planned additions
 
 | Method and path | Purpose | Success |
 | --- | --- | --- |
-| `POST /api/v1/workflows` | Create immutable workflow version | `201` |
-| `GET /api/v1/workflows/{workflowId}` | Read workflow/version | `200` |
-| `POST /api/v1/jobs` | Submit an immediate or scheduled job | `202` |
+| `POST /api/v1/workflows` | Create immutable workflow version (planned) | `201` |
+| `GET /api/v1/workflows/{workflowId}` | Read workflow/version (planned) | `200` |
+| `POST /api/v1/jobs` | Create an immediate or scheduled job | `201` |
 | `GET /api/v1/jobs/{jobId}` | Read current job state/result | `200` |
-| `GET /api/v1/jobs` | List tenant jobs with filters/cursor | `200` |
-| `POST /api/v1/jobs/{jobId}/cancel` | Request cooperative cancellation | `202` |
-| `GET /api/v1/jobs/{jobId}/attempts` | Read ordered attempt history | `200` |
+| `GET /api/v1/jobs` | List jobs with filters and bounded pagination | `200` |
+| `POST /api/v1/jobs/{jobId}/cancel` | Cancel an eligible job | `200` |
+| `GET /api/v1/jobs/{jobId}/attempts` | Read ordered attempt history (planned) | `200` |
 
-Submission accepts `workflowId`, optional pinned `workflowVersion`, `input`,
-optional `runAt`, and an `Idempotency-Key` header. Response is `202 Accepted`
-with `jobId`, `status`, and `createdAt`. Repeated submissions with the same
-tenant, endpoint scope, key, and request hash return the same job; a different
-request hash returns `409 Conflict`. Unknown resources return `404`; malformed
-input returns `400`; exhausted quotas return `429`; dependency outages return
-`503` without reporting false acceptance.
+The current create request accepts `jobType`, JSON-object `payload`, optional
+`scheduledAt`, `maxAttempts` (default 5, 1–100), and `retryDelaySeconds`
+(default 0, 0–86400). It returns `201 Created`, a `Location` header, and a job
+DTO. Future schedule times produce `SCHEDULED`; absent or past times produce
+`PENDING`. Listing supports optional status and exact job type filters,
+zero-based `page`, bounded `size` (1–100), an allowlisted `sortBy`, and
+`ASC`/`DESC` direction. Cancelling `PENDING` or `SCHEDULED` transitions it
+immediately to `CANCELLED`; repeated cancellation of an already-cancelled job
+is idempotent. Other ineligible states return `409 Conflict`. Unknown jobs
+return `404`; malformed input and unsupported sorting return `400`.
+
+Request idempotency and workflow-linked submission remain planned work; no
+Kafka dispatch is performed when creating a job in this milestone.
 
 ### Planned event envelopes
 
@@ -302,28 +318,25 @@ avoid logging job inputs or credentials.
 Each milestone is independently reviewable and should have targeted tests,
 updated progress documentation, and a Conventional Commit.
 
-1. **Foundation (current):** monorepo conventions, architecture and contracts
-   documentation, Java 21 Maven reactor, Spring Boot health endpoint, smoke
-   test, README setup.
-2. **Service skeletons and local runtime:** Compose for PostgreSQL, Kafka,
-   Redis, Prometheus, and Grafana; containerize the control plane; add
-   configuration profiles, health/readiness, and local dashboards.
-3. **Durable control-plane model:** Flyway schema, workflow/job CRUD and
-   validation, tenant boundary abstraction, API contract/OpenAPI, integration
-   tests against PostgreSQL.
-4. **Idempotent submission and outbox:** request idempotency, transactional
+1. **Foundation (complete):** monorepo conventions, architecture and contracts
+   documentation, Java 21 Maven reactor, and Spring Boot health endpoint.
+2. **PostgreSQL persistence and job management API (complete):**
+   PostgreSQL Compose configuration, Flyway-managed jobs schema, JPA entity
+   and repository, job lifecycle, REST DTOs/endpoints, validation, Problem
+   Details, OpenAPI, and PostgreSQL Testcontainers coverage.
+3. **Idempotent submission and outbox:** request idempotency, transactional
    outbox, event schemas, publisher, duplicate/restart integration tests.
-5. **Scheduling and Kafka dispatch:** due-work claiming, backpressure,
+4. **Scheduling and Kafka dispatch:** due-work claiming, backpressure,
    partition strategy, retry scheduling, dead-letter handling and metrics.
-6. **Worker runtime and recovery:** handler contract, attempt/lease fencing,
+5. **Worker runtime and recovery:** handler contract, attempt/lease fencing,
    heartbeat, cancellation, transient/permanent failure classification,
    crash/lease-expiry recovery tests.
-7. **Operator UI:** React/TypeScript console, typed API client, job listing,
+6. **Operator UI:** React/TypeScript console, typed API client, job listing,
    detail and attempt timeline, cancel/retry operations with accessibility and
    UI tests.
-8. **Production readiness:** authentication/authorization, quotas, retention,
-   load and resilience tests, Prometheus alerts/Grafana dashboards, deployment
-   packaging, runbooks, and security review.
+7. **Production readiness:** tenant authentication/authorization, quotas,
+   retention, Kafka/Redis/Prometheus/Grafana local and deployment setup, load
+   and resilience tests, runbooks, and security review.
 
 Do not advance a milestone solely because its code exists: its acceptance
 checks must run and its status in `docs/PROGRESS.md` must be updated.

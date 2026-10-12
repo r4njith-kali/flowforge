@@ -1,22 +1,33 @@
 # Implementation Progress
 
-Last updated: 2026-10-12
+Last updated: 2026-10-13
 
 | Milestone | Status | Evidence / next acceptance checks |
 | --- | --- | --- |
-| Foundation and architecture | Complete | Architecture, roadmap, API/data model, lifecycle/recovery guidance, Maven reactor, and README setup are in place. `mvn -B -ntp verify` passed (1 test); live `GET /actuator/health` returned `{"status":"UP"}`. Compiled with `--release 21` and tested on installed Java 25 because JDK 21 is not installed in the environment. |
-| Service skeletons and local runtime | Not started | Add Docker Compose dependencies and service container; verify all dependencies start locally. |
-| Durable control-plane model | Not started | Add migrations, API contract, job persistence, and PostgreSQL integration tests. |
-| Idempotent submission and outbox | Not started | Verify duplicate submission, conflict on request-hash mismatch, and restart-safe publication. |
-| Scheduling and Kafka dispatch | Not started | Verify due-work claiming, backpressure, retry scheduling, and dead-letter behavior. |
-| Worker runtime and recovery | Not started | Verify leases, heartbeats, cancellation, retries, and worker-loss recovery. |
-| Operator UI | Not started | Verify typed API integration, core workflows, accessibility, and UI tests. |
-| Production readiness | Not started | Verify security, load/resilience, dashboards/alerts, packaging, and runbooks. |
+| 1. Architecture and project foundation | Complete | Java 21 Maven reactor and health endpoint committed; tested with Java 25 using `--release 21`. |
+| 2. PostgreSQL persistence and job management REST API | Complete | `mvn -B -ntp clean verify`: 23 tests passed, 0 failed/errors; includes PostgreSQL 16 Testcontainers migration and REST integration tests. Compose config validated. |
+| 3. Idempotent submission and outbox | Not started | Add tenant-scoped request idempotency and transactional event outbox; verify duplicate requests and restart-safe publication. |
+| 4. Scheduling and Kafka dispatch | Not started | Add due-job claiming, dispatch, backpressure, retry scheduling, and dead-letter handling. |
+| 5. Worker runtime and recovery | Not started | Add worker handlers, attempt leases, heartbeat, cancellation, and crash recovery. |
+| 6. Operator UI | Not started | Add React/TypeScript console and typed API client with accessibility and UI tests. |
+| 7. Production readiness | Not started | Add authentication, quotas, retention, Kafka/Redis/monitoring deployment, resilience tests, and runbooks. |
 
-## Current increment
+## Delivered in milestone 2
 
-- Repository baseline: empty project scaffold with README and `.gitignore`.
-- Delivered: documented architecture and roadmap plus a Java 21 Spring Boot
-  control-plane starter exposing `/actuator/health`.
-- Not included: job/workflow APIs, persistence, Kafka, Redis, UI, Compose, or
-  production deployment.
+- PostgreSQL 16 local Compose service; database credentials are read from
+  ignored `.env` values and required Compose substitutions.
+- Flyway V1 migration creates `jobs` with JSONB payload, constrained lifecycle
+  status and retry fields, optimistic-lock version, timestamps, and query
+  indexes. Hibernate validates the mapping; it does not generate the schema.
+- `POST /api/v1/jobs`, filtered/paginated/sorted `GET /api/v1/jobs`,
+  `GET /api/v1/jobs/{id}`, and `POST /api/v1/jobs/{id}/cancel`.
+- DTO-based request/response handling, validation, Problem Details, bounded
+  safe sorting, optimistic state updates, and springdoc OpenAPI.
+- JUnit 5 unit/MVC tests and PostgreSQL Testcontainers integration coverage.
+
+## Explicitly not delivered
+
+Kafka publication/consumers, worker execution, retries at runtime, request
+idempotency, workflow definitions, multi-tenant authentication, Redis,
+Prometheus/Grafana, and the web console remain future milestones. Job retry
+settings are persisted but are not yet acted on by a worker.

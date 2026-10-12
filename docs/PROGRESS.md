@@ -6,7 +6,7 @@ Last updated: 2026-10-13
 | --- | --- | --- |
 | 1. Architecture and project foundation | Complete | Java 21 Maven reactor and health endpoint committed; tested with Java 25 using `--release 21`. |
 | 2. PostgreSQL persistence and job management REST API | Complete | `mvn -B -ntp clean verify`: 23 tests passed, 0 failed/errors; includes PostgreSQL 16 Testcontainers migration and REST integration tests. Compose config validated. |
-| 3. Idempotent submission and outbox | Complete | Optional operation-scoped idempotency with 24-hour retention; transactional `JobCreated` outbox; PostgreSQL integration coverage. No publisher/Kafka delivery is implemented yet. |
+| 3. Idempotent submission and outbox | Complete | Optional operation-scoped idempotency with 24-hour retention; transactional `JobCreated` outbox; PostgreSQL integration coverage. Kafka publication was added in milestone 4. |
 | 4. Scheduling and Kafka dispatch | Complete | PostgreSQL-backed `SKIP LOCKED` outbox claims, Kafka acknowledgement sequencing, scheduled eligibility, bounded retries/leases, and PostgreSQL+Kafka Testcontainers coverage. |
 | 5. Worker runtime and recovery | Complete | Independent Spring Boot Maven service; Kafka dispatch consumer, PostgreSQL-fenced attempts, leases/heartbeats, cooperative cancellation, bounded retries, and lease-expiry recovery. Verified with PostgreSQL and Kafka Testcontainers. |
 | 6. Operator UI | Not started | Add React/TypeScript console and typed API client with accessibility and UI tests. |
@@ -36,14 +36,14 @@ Last updated: 2026-10-13
   the final uniqueness guard.
 - Job, idempotency record, and `JobCreated` outbox event are stored in the same
   PostgreSQL transaction. A database-backed claim design supports future
-  concurrent publishers using `FOR UPDATE SKIP LOCKED`.
+  concurrent publishers using `FOR UPDATE SKIP LOCKED`; milestone 4 added the
+  Kafka publisher.
 - Idempotency keys are retained for 24 hours; expired keys may be reused, and
   an hourly scheduled cleanup removes expired records. Keys are scoped to
   `POST:/api/v1/jobs`, not to a tenant. Add tenant scoping before enabling
   multi-tenant use.
-- No Kafka producer or publisher is implemented. Future outbox delivery is
-  at least once, so consumers and external side effects must be idempotent;
-  exactly-once distributed execution is not promised.
+- Outbox delivery is at least once, so consumers and external side effects
+  must be idempotent; exactly-once distributed execution is not promised.
 
 ## Delivered in milestone 4
 
@@ -118,6 +118,15 @@ Last updated: 2026-10-13
   compilation. Compose configuration validation and the worker Docker image
   build also succeeded. The Testcontainers Docker API override is local-only
   and is not required in CI.
+- End-to-end verification (2026-10-13): local PostgreSQL and Kafka became
+  healthy, Flyway V1-V4 succeeded, two worker containers ran independently,
+  and jobs were submitted through the REST API. `demo.echo` completed with
+  one persisted attempt and result; its identical Idempotency-Key replay
+  returned the same job ID. A scheduled `demo.delay` remained unclaimed before
+  its due time and completed after it. A future scheduled job was cancelled
+  with no execution attempts. Both workers were restarted and a subsequent
+  echo job completed. See `docs/E2E_DEMO.md` for IDs, database/API evidence,
+  logs, reproduction steps, and startup defects found and fixed.
 
 ## Explicitly not delivered
 

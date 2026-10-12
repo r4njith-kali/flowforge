@@ -21,6 +21,8 @@ caching.
 See [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) for the
 architecture, service boundaries, data model, lifecycle, and roadmap.
 Milestone status is tracked in [docs/PROGRESS.md](docs/PROGRESS.md).
+The reproducible end-to-end runtime demonstration and observed verification
+evidence are in [docs/E2E_DEMO.md](docs/E2E_DEMO.md).
 
 ## Repository layout
 
@@ -72,6 +74,9 @@ set +a
 `localhost:9092`). The example file contains placeholders only. Flyway applies
 the versioned schema on application startup, and Hibernate validates mappings
 without generating or modifying schema.
+If the default host ports are occupied, change `POSTGRES_PORT`, `KAFKA_PORT`,
+`DB_URL`, and `KAFKA_BOOTSTRAP_SERVERS` together in `.env`; Compose advertises
+the configured Kafka host port to host-based clients.
 
 ## Build, test, and run
 

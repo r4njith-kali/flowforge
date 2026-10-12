@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+node_modules/
+dist/
+build/
+target/
+.gradle/
+.idea/
+.vscode/
+*.log
+coverage/

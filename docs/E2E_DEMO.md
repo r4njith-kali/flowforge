@@ -248,8 +248,10 @@ demonstration job
 outbox publication retries. The Compose advertised host listener now follows
 `KAFKA_PORT`. After recreating Kafka and restarting the control plane and
 workers, the later echo, scheduled, cancellation, and restart checks above
-passed. The initial failed job is retained in the local test database as
-evidence of the failure; it was not counted as a successful execution.
+passed. The retained database row confirmed `FAILED`, eight publication
+attempts, a terminal-failure timestamp, and no `published_at`. The initial
+failed job is retained in the local test database as evidence of the failure;
+it was not counted as a successful execution.
 
 The restart check exercised idle worker restart and subsequent processing.
 An in-flight forced crash/lease-expiry scenario was not induced against this

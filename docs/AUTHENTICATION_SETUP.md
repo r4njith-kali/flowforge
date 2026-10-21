@@ -92,6 +92,9 @@ to clear its OIDC session.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `DB_URL` | `jdbc:postgresql://localhost:5432/flowforge` | PostgreSQL connection URL |
+| `DB_USERNAME` | Required | PostgreSQL username for both Spring services |
+| `DB_PASSWORD` | Required | PostgreSQL password for both Spring services |
 | `FLOWFORGE_OIDC_ISSUER_URI` | `http://localhost:8180/realms/flowforge` | Exact expected token issuer |
 | `FLOWFORGE_OIDC_JWK_SET_URI` | `http://localhost:8180/realms/flowforge/protocol/openid-connect/certs` | Trusted signing-key endpoint |
 | `FLOWFORGE_OIDC_AUDIENCE` | `flowforge-api` | Required JWT audience |
@@ -99,6 +102,11 @@ to clear its OIDC session.
 | `VITE_OIDC_AUTHORITY` | `http://localhost:8180/realms/flowforge` | Browser's OIDC authority |
 | `VITE_OIDC_CLIENT_ID` | `flowforge-web` | Public browser client |
 
+Both backend services require `DB_USERNAME` and `DB_PASSWORD`; they do not
+fall back to empty credentials. Missing variables prevent application
+configuration from resolving at startup. The local `.env.example` supplies
+development placeholders; replace them with local-only values before running
+the services.
 Keep issuer and audience values aligned with the realm/client configuration.
 Deployed environments must use HTTPS endpoints, protected secret storage, and
 their own redirect URIs and CORS origin.

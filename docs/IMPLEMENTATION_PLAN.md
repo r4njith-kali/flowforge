@@ -398,8 +398,11 @@ considerations, and verification boundaries are documented in
 `docs/SECURITY_ARCHITECTURE.md` and `docs/AUTHENTICATION_SETUP.md`. Use TLS
 between deployed services and authenticated principals at public boundaries.
 Store secrets in environment/secret-manager configuration, never in source
-control. Validate user ownership on every object operation; tenant ownership
-remains a future isolation boundary.
+control. Both backend services require explicit database username and password
+configuration; local setup supplies these through the ignored `.env` file and
+the application no longer defaults missing values to empty strings. Validate
+user ownership on every object operation; tenant ownership remains a future
+isolation boundary.
 Apply payload limits, request timeouts, database connection pooling, Kafka
 consumer backpressure, and explicit shutdown/drain behavior. Readiness should
 represent required dependencies; liveness should not fail merely because an
@@ -447,6 +450,8 @@ updated progress documentation, and a Conventional Commit.
    ownership tests, and live OIDC/API/worker checks were verified. A separate
    Maven dependency vulnerability scan and production identity-provider and
    infrastructure hardening remain follow-up work; see `docs/PROGRESS.md`.
+   FLOW-103 additionally validates nonblank database credentials before
+   datasource initialization in both services.
 7B. **Production readiness and tenant isolation (planned):** explicit tenant
    identity and data boundaries, tenant-scoped quotas, retention and audit
    policy, Kafka/Redis/Prometheus/Grafana deployment, load and resilience

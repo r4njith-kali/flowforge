@@ -130,7 +130,8 @@ The application reads `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`. Kafka uses
 placeholders only. Keycloak imports the `flowforge` realm, public SPA client,
 API audience mapper, and three role-assigned local users. Set local passwords
 for those users in the Keycloak admin console before signing in; no user or
-admin password is committed.
+admin password is committed. Both Spring services require `DB_USERNAME` and
+`DB_PASSWORD`; missing values fail application configuration at startup.
 If the default host ports are occupied, change `POSTGRES_PORT`, `KAFKA_PORT`,
 `DB_URL`, and `KAFKA_BOOTSTRAP_SERVERS` together in `.env`; Compose advertises
 the configured Kafka host port to host-based clients.

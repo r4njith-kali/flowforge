@@ -12,6 +12,7 @@ Last updated: 2026-10-21
 | 6. Operator UI | Complete | React/TypeScript Vite dashboard with server-side job management, live detail polling, accessible cancellation/submission, 11 passing UI/API tests, production build, and a live `demo.echo` verification. |
 | 7A. User authentication and authorization | Complete | Full Maven/Testcontainers verification: 70 tests passed. Frontend lint, strict typecheck, 19 tests, and production build passed. Compose config and local Keycloak realm validated; live PKCE login, API ownership/role checks, authenticated operator submission, and worker completion verified. `npm audit` reported 0 known vulnerabilities; Maven vulnerability scanning and production hardening remain follow-up work. |
 | FLOW-103. Required database credentials | Complete | Both Spring services validate nonblank database credentials before database initialization; missing, blank, and unresolved-placeholder checks pass. Full Maven/Testcontainers verification: 85 tests passed. Tracked by GitHub issue #2 and PR #3. |
+| FLOW-104. Frontend OIDC environment example | Complete | Added the public OIDC authority and client ID to the frontend `.env.example`; values match existing defaults. Tracked by GitHub issue #4. |
 | 7B. Production readiness and tenant isolation | Planned | Add true tenant-scoped isolation, quotas, audit/retention policies, deployment monitoring, resilience tests, and runbooks after 7A acceptance. |
 
 ## Delivered in milestone 2

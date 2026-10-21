@@ -12,3 +12,14 @@
   Maven/Testcontainers verification passed all 85 tests with the documented
   local Docker API compatibility override.
 - **Tracking:** GitHub issue #2; pull request #3.
+
+## 2026-10-21 — FLOW-104: Document frontend OIDC overrides
+
+- **Decision:** Add the authority URL and public client ID to the frontend
+  environment example, using the same values as the existing development
+  defaults.
+- **Rationale:** Make the already-supported OIDC overrides discoverable
+  without changing authentication behavior or adding secrets.
+- **Verification:** Confirmed both values match `apps/web/src/auth/oidc.ts`.
+  This example-only change does not require running the application tests.
+- **Tracking:** GitHub issue #4.

@@ -7,8 +7,8 @@ spring:
           jwk-set-uri: ${FLOWFORGE_OIDC_JWK_SET_URI:http://localhost:8180/realms/flowforge/protocol/openid-connect/certs}
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/flowforge}
-    username: ${DB_USERNAME:}
-    password: ${DB_PASSWORD:}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
   jpa:
     open-in-view: false
     hibernate:

@@ -1,6 +1,6 @@
 # Implementation Progress
 
-Last updated: 2026-10-13
+Last updated: 2026-10-21
 
 | Milestone | Status | Evidence / next acceptance checks |
 | --- | --- | --- |
@@ -11,6 +11,7 @@ Last updated: 2026-10-13
 | 5. Worker runtime and recovery | Complete | Independent Spring Boot Maven service; Kafka dispatch consumer, PostgreSQL-fenced attempts, leases/heartbeats, cooperative cancellation, bounded retries, and lease-expiry recovery. Verified with PostgreSQL and Kafka Testcontainers. |
 | 6. Operator UI | Complete | React/TypeScript Vite dashboard with server-side job management, live detail polling, accessible cancellation/submission, 11 passing UI/API tests, production build, and a live `demo.echo` verification. |
 | 7A. User authentication and authorization | Complete | Full Maven/Testcontainers verification: 70 tests passed. Frontend lint, strict typecheck, 19 tests, and production build passed. Compose config and local Keycloak realm validated; live PKCE login, API ownership/role checks, authenticated operator submission, and worker completion verified. `npm audit` reported 0 known vulnerabilities; Maven vulnerability scanning and production hardening remain follow-up work. |
+| FLOW-103. Required database credentials | Complete | Both Spring services validate nonblank database credentials before database initialization; missing, blank, and unresolved-placeholder checks pass. Full Maven/Testcontainers verification: 85 tests passed. Tracked by GitHub issue #2. |
 | 7B. Production readiness and tenant isolation | Planned | Add true tenant-scoped isolation, quotas, audit/retention policies, deployment monitoring, resilience tests, and runbooks after 7A acceptance. |
 
 ## Delivered in milestone 2
@@ -197,6 +198,20 @@ Last updated: 2026-10-13
 - A Maven dependency vulnerability scan was not run. Production HTTPS,
   deployed-IdP configuration, managed secrets, auditing/rate limiting, and
   genuine tenant isolation remain outside 7A.
+
+## Delivered in FLOW-103
+
+- Removed the assumption that an empty database username/password is an
+  acceptable fallback. Both services now validate the resolved
+  `spring.datasource.username` and `spring.datasource.password` during
+  application-context setup, before datasource initialization.
+- Missing or blank credentials fail startup with the corresponding required
+  configuration variable named in the error. The local setup guide and README
+  document these required values.
+- Added context tests for missing, blank, and unresolved credentials, plus
+  valid configuration, in both services. `mvn -B -ntp clean verify
+  -Dtestcontainers.docker-api-version=1.40` passed all 85 tests.
+- Tracked by GitHub issue #2.
 
 ## Explicitly not delivered
 

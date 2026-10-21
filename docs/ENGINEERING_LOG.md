@@ -11,4 +11,4 @@
   unresolved placeholders, and valid credentials in both services. Full
   Maven/Testcontainers verification passed all 85 tests with the documented
   local Docker API compatibility override.
-- **Tracking:** GitHub issue #2.
+- **Tracking:** GitHub issue #2; pull request #3.

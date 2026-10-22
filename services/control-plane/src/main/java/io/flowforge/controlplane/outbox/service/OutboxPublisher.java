@@ -2,6 +2,7 @@ package io.flowforge.controlplane.outbox.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.flowforge.common.retry.RetryBackoff;
 import io.flowforge.controlplane.outbox.domain.ClaimedOutboxEvent;
 import io.flowforge.controlplane.outbox.domain.JobEventEnvelope;
 import io.flowforge.controlplane.outbox.persistence.OutboxStore;
@@ -17,6 +18,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -162,13 +164,11 @@ public class OutboxPublisher {
     }
 
     private Duration retryDelay(int attemptCount) {
-        long baseMillis = retryBaseDelay.toMillis();
-        long maxMillis = retryMaxDelay.toMillis();
-        int shift = Math.min(Math.max(attemptCount - 1, 0), 62);
-        long delayMillis = baseMillis > (maxMillis >> shift)
-                ? maxMillis
-                : Math.min(maxMillis, baseMillis << shift);
-        return Duration.ofMillis(delayMillis);
+        return RetryBackoff.fullJitter(
+                retryBaseDelay,
+                retryMaxDelay,
+                attemptCount,
+                ThreadLocalRandom.current().nextDouble());
     }
 
     private static String rootMessage(Exception exception) {

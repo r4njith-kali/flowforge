@@ -47,3 +47,16 @@
 - **Verification:** `npm run lint`, `npm run typecheck`, `npm test` (22 tests),
   and `npm run build` all passed in `apps/web/`.
 - **Tracking:** GitHub issue #8.
+
+## 2026-10-22 — FLOW-107: Desynchronize retry backoff
+
+- **Decision:** Apply bounded exponential full jitter to outbox publication
+  and worker execution retries through a shared `java-common` helper.
+- **Rationale:** Randomized delays reduce synchronized retry bursts across
+  publishers and workers while preserving configured retry ceilings and
+  existing attempt limits.
+- **Verification:** Focused retry, outbox, and worker integration tests passed
+  (18 tests). Full Maven/Testcontainers verification passed all 96 tests
+  (6 common, 73 control-plane, 17 worker) with the documented local Docker
+  API compatibility override.
+- **Tracking:** GitHub issue #10.

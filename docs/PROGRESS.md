@@ -15,6 +15,7 @@ Last updated: 2026-10-22
 | FLOW-104. Frontend OIDC environment example | Complete | Added the public OIDC authority and client ID to the frontend `.env.example`; values match existing defaults. Tracked by GitHub issue #4. |
 | FLOW-105. Job results and attempt history API | Complete | Job details expose persisted result/error and `GET /api/v1/jobs/{jobId}/attempts` returns ordered attempts under existing owner authorization. Full Maven/Testcontainers verification: 90 tests passed (73 control-plane, 17 worker). Tracked by GitHub issue #6. |
 | FLOW-106. Dashboard execution history | Complete | Typed API client and job detail page render persisted result/error and ordered worker attempts with independent loading, empty, and error states. Frontend lint, typecheck, 22 tests, and production build passed. Tracked by GitHub issue #8. |
+| FLOW-107. Jittered retry backoff | Complete | Shared Java retry utility applies bounded exponential full jitter to worker execution and outbox publication retries. Full Maven/Testcontainers verification: 96 tests passed (6 common, 73 control-plane, 17 worker). Tracked by GitHub issue #10. |
 | 7B. Production readiness and tenant isolation | Planned | Add true tenant-scoped isolation, quotas, audit/retention policies, deployment monitoring, resilience tests, and runbooks after 7A acceptance. |
 
 ## Delivered in milestone 2

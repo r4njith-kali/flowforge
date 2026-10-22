@@ -1,6 +1,7 @@
 package io.flowforge.worker.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.flowforge.common.retry.RetryBackoff;
 import io.flowforge.worker.domain.FailureKind;
 import io.flowforge.worker.domain.JobCancelledException;
 import io.flowforge.worker.domain.JobExecutionClaim;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Service
 public class JobExecutionService {
@@ -154,13 +156,11 @@ public class JobExecutionService {
         long configuredBase = retryBaseDelay.toMillis();
         long jobBase = Duration.ofSeconds(claim.retryDelaySeconds()).toMillis();
         long base = Math.max(configuredBase, jobBase);
-        long maximum = retryMaxDelay.toMillis();
-        if (base == 0 || maximum == 0) {
-            return Duration.ZERO;
-        }
-        int shift = Math.min(Math.max(claim.attemptNumber() - 1, 0), 62);
-        long delay = base > (maximum >> shift) ? maximum : Math.min(maximum, base << shift);
-        return Duration.ofMillis(delay);
+        return RetryBackoff.fullJitter(
+                Duration.ofMillis(base),
+                retryMaxDelay,
+                claim.attemptNumber(),
+                ThreadLocalRandom.current().nextDouble());
     }
 
     private String writeJson(Object value) {

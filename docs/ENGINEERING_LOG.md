@@ -23,3 +23,16 @@
 - **Verification:** Confirmed both values match `apps/web/src/auth/oidc.ts`.
   This example-only change does not require running the application tests.
 - **Tracking:** GitHub issue #4.
+
+## 2026-10-22 — FLOW-105: Expose job results and attempt history
+
+- **Decision:** Return persisted job result/error only from the detail route
+  and add an owner-authorized endpoint for execution attempts in attempt-number
+  order. Keep list and create response shapes unchanged.
+- **Rationale:** Workers already persist these outcomes; exposing them through
+  the existing ownership boundary closes a key operator visibility gap.
+- **Verification:** Focused control-plane PostgreSQL integration and service
+  tests passed (31 tests). Full Maven/Testcontainers verification passed all
+  90 tests (73 control-plane, 17 worker) with the documented local Docker API
+  compatibility override.
+- **Tracking:** GitHub issue #6.

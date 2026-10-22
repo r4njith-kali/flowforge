@@ -4,6 +4,7 @@ import io.flowforge.controlplane.job.domain.Job;
 import io.flowforge.controlplane.job.domain.JobNotFoundException;
 import io.flowforge.controlplane.job.domain.JobStatus;
 import io.flowforge.controlplane.job.persistence.JobRepository;
+import io.flowforge.controlplane.job.persistence.JobAttemptRepository;
 import io.flowforge.controlplane.security.JobOwner;
 import jakarta.persistence.EntityManager;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -43,6 +44,9 @@ class JobServiceTest {
     private JobRepository jobRepository;
 
     @Mock
+    private JobAttemptRepository jobAttemptRepository;
+
+    @Mock
     private JdbcTemplate jdbcTemplate;
 
     @Mock
@@ -54,6 +58,7 @@ class JobServiceTest {
     void setUp() {
         jobService = new JobService(
                 jobRepository,
+                jobAttemptRepository,
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 jdbcTemplate,
                 entityManager);
@@ -159,6 +164,25 @@ class JobServiceTest {
 
         assertThatThrownBy(() -> jobService.get(id, OWNER, false))
                 .isInstanceOf(JobNotFoundException.class);
+    }
+
+    @Test
+    void nonAdministratorCannotReadAnotherUsersAttempts() {
+        UUID id = UUID.randomUUID();
+        Job someoneElsesJob = Job.create(
+                "email.send",
+                Map.of(),
+                null,
+                2,
+                0,
+                NOW,
+                new JobOwner("https://issuer.test", "another-user"));
+        when(jobRepository.findById(id)).thenReturn(Optional.of(someoneElsesJob));
+
+        assertThatThrownBy(() -> jobService.listAttempts(id, OWNER, false))
+                .isInstanceOf(JobNotFoundException.class);
+
+        verify(jobAttemptRepository, never()).findByJobIdOrderByAttemptNumber(id);
     }
 
     @Test

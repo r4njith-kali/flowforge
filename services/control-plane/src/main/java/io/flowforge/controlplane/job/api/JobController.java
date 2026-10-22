@@ -99,13 +99,28 @@ public class JobController {
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR', 'VIEWER')")
     @Operation(summary = "Get a job")
-    public JobResponse get(
+    public JobDetailResponse get(
             @PathVariable("id") UUID id,
             @AuthenticationPrincipal Jwt principal) {
-        return JobResponse.from(jobService.get(
+        return JobDetailResponse.from(jobService.get(
                 id,
                 JobOwner.from(principal),
                 isAdministrator(principal)));
+    }
+
+    @GetMapping("/{id}/attempts")
+    @PreAuthorize("hasAnyRole('ADMIN', 'OPERATOR', 'VIEWER')")
+    @Operation(summary = "List execution attempts for a job")
+    public java.util.List<JobAttemptResponse> attempts(
+            @PathVariable("id") UUID id,
+            @AuthenticationPrincipal Jwt principal) {
+        return jobService.listAttempts(
+                        id,
+                        JobOwner.from(principal),
+                        isAdministrator(principal))
+                .stream()
+                .map(JobAttemptResponse::from)
+                .toList();
     }
 
     @PostMapping("/{id}/cancel")

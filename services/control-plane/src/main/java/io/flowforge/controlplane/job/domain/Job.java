@@ -53,6 +53,14 @@ public class Job {
     @Column(name = "cancel_requested_at")
     private Instant cancelRequestedAt;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "result", columnDefinition = "jsonb")
+    private Map<String, Object> result;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "error", columnDefinition = "jsonb")
+    private Map<String, Object> error;
+
     @Column(name = "attempt_count", nullable = false)
     private int attemptCount;
 
@@ -182,6 +190,14 @@ public class Job {
 
     public Instant getCancelRequestedAt() {
         return cancelRequestedAt;
+    }
+
+    public Map<String, Object> getResult() {
+        return result;
+    }
+
+    public Map<String, Object> getError() {
+        return error;
     }
 
     public int getAttemptCount() {

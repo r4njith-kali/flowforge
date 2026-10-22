@@ -88,9 +88,10 @@ docs/
 ```
 
 The Maven reactor currently contains the root parent plus
-`services/control-plane` and `services/worker`. Shared code should only be
-extracted after a concrete cross-service reuse case appears; PostgreSQL schema
-migrations remain packaged and applied by the control plane.
+`libs/java-common`, `services/control-plane`, and `services/worker`.
+`java-common` currently provides the retry backoff helper shared by both
+services; PostgreSQL schema migrations remain packaged and applied by the
+control plane.
 
 ## 4. Service boundaries
 
@@ -376,9 +377,12 @@ before claiming it.
   current worker default cap is 100; newly submitted jobs default to 5.
   Exponential retry delay is capped by `FLOWFORGE_WORKER_RETRY_MAX_DELAY`
   (default 5 minutes), with the initial delay set to the larger of the job's
-  `retryDelaySeconds` and worker's configured retry base. No jitter is applied.
+  `retryDelaySeconds` and worker's configured retry base. Each retry uses
+  full jitter, selecting a random delay from zero up to (but below) the
+  exponentially growing, configured maximum.
 - Outbox publication independently defaults to 8 claim attempts with
-  exponential retry from 1 second up to 5 minutes; it has no jitter yet.
+  exponential retry from 1 second up to 5 minutes, also using full jitter.
+  Both retry paths share the overflow-safe `java-common` backoff helper.
 - Persist `attempt_count`, `next_attempt_at`, failure class, and error before
   acknowledging a failed attempt. A retry is a new attempt, never an in-place
   rewrite of attempt history.

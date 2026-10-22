@@ -1,12 +1,12 @@
 import { useCallback, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { ApiError, cancelJob, getJob } from '../api/client'
+import { ApiError, cancelJob, getJob, getJobAttempts } from '../api/client'
 import { ErrorNotice } from '../components/Feedback'
 import { Icon } from '../components/Icon'
 import { StatusBadge } from '../components/StatusBadge'
 import { useRefreshInterval } from '../context/RefreshIntervalContext'
 import { usePollingQuery } from '../hooks/usePollingQuery'
-import type { Job, JobStatus } from '../types/job'
+import type { Job, JobAttempt, JobStatus } from '../types/job'
 import { useAuth } from '../auth/AuthContext'
 
 const terminalStatuses: JobStatus[] = ['COMPLETED', 'FAILED', 'CANCELLED']
@@ -92,10 +92,17 @@ export function JobDetailPage() {
   const location = useLocation()
   const interval = useRefreshInterval()
   const loader = useCallback(() => getJob(id), [id])
-  const { data: job, error, isLoading, refresh, setData } = usePollingQuery(
+  const attemptsLoader = useCallback(() => getJobAttempts(id), [id])
+  const { data: job, error, isLoading, refresh } = usePollingQuery(
     loader,
     interval,
   )
+  const {
+    data: attempts,
+    error: attemptsError,
+    isLoading: attemptsLoading,
+    refresh: refreshAttempts,
+  } = usePollingQuery(attemptsLoader, interval)
   const [actionMessage, setActionMessage] = useState<string | null>(
     (location.state as { notice?: string } | null)?.notice ?? null,
   )
@@ -109,7 +116,6 @@ export function JobDetailPage() {
     setIsCancelling(true)
     try {
       const result = await cancelJob(job.id)
-      setData(result.job)
       setActionMessage(
         result.accepted
           ? 'Cancellation accepted. The job is still running until the worker stops cooperatively.'
@@ -118,6 +124,7 @@ export function JobDetailPage() {
             : `Cancellation response received. Current status: ${result.job.status}.`,
       )
       refresh()
+      refreshAttempts()
     } catch (caught) {
       setActionError(
         caught instanceof ApiError && caught.status === 409
@@ -242,8 +249,8 @@ export function JobDetailPage() {
               ))}
             </ol>
             <p className="timeline-note">
-              Timeline entries come only from timestamps exposed by the API.
-              Dispatch and attempt-history events are not currently available.
+              Job-level timestamps are shown here; worker attempt details are
+              listed separately below.
             </p>
           </section>
 
@@ -264,18 +271,50 @@ export function JobDetailPage() {
                 <p className="eyebrow">OUTPUT</p>
                 <h2>Execution result</h2>
               </div>
-              <span className="not-exposed-tag">Not exposed</span>
+              <span className="language-tag">JSON</span>
             </div>
-            <div className="unavailable-block">
-              <Icon name="shield" />
+            {job.result && <JsonBlock label="Job result" value={job.result} />}
+            {job.error && <JsonBlock label="Job error" value={job.error} />}
+            {!job.result && !job.error && (
+              <p className="execution-empty">
+                No execution result or error has been recorded.
+              </p>
+            )}
+          </section>
+
+          <section aria-label="Execution attempts" className="panel">
+            <div className="panel-heading panel-heading-compact">
               <div>
-                <strong>Result data is not available through the current API.</strong>
-                <p>
-                  FlowForge persists worker results, but this response contract
-                  does not include them.
-                </p>
+                <p className="eyebrow">WORKER HISTORY</p>
+                <h2>Execution attempts</h2>
               </div>
+              <span className="attempt-count">
+                {attempts ? `${attempts.length} recorded` : '—'}
+              </span>
             </div>
+            {attemptsError && (
+              <ErrorNotice title="Could not load attempt history" onRetry={refreshAttempts}>
+                {attempts?.length
+                  ? `Showing the last successful response. ${attemptsError.message}`
+                  : attemptsError.message}
+              </ErrorNotice>
+            )}
+            {attemptsLoading && !attempts ? (
+              <div aria-label="Loading attempts" className="table-loading">
+                <span className="spinner" />
+                Loading execution attempts…
+              </div>
+            ) : attempts?.length ? (
+              <ol className="attempt-list">
+                {attempts.map((attempt) => (
+                  <AttemptItem attempt={attempt} key={attempt.id} />
+                ))}
+              </ol>
+            ) : !attemptsError ? (
+              <p className="execution-empty">
+                No worker attempts have been recorded yet.
+              </p>
+            ) : null}
           </section>
         </div>
 
@@ -321,5 +360,37 @@ export function JobDetailPage() {
         </aside>
       </div>
     </div>
+  )
+}
+
+function JsonBlock({ label, value }: { label: string; value: object }) {
+  return (
+    <div className="execution-json">
+      <h3>{label}</h3>
+      <pre className="json-block"><code>{JSON.stringify(value, null, 2)}</code></pre>
+    </div>
+  )
+}
+
+function AttemptItem({ attempt }: { attempt: JobAttempt }) {
+  return (
+    <li className="attempt-item">
+      <div className="attempt-heading">
+        <strong>Attempt {attempt.attemptNumber}</strong>
+        <span className={`attempt-status attempt-status-${attempt.status.toLowerCase().replaceAll('_', '-')}`}>
+          {attempt.status.replaceAll('_', ' ')}
+        </span>
+      </div>
+      <dl className="attempt-metadata">
+        <MetadataRow label="Worker" value={attempt.workerId} />
+        <MetadataRow label="Started" value={formatDate(attempt.startedAt)} />
+        <MetadataRow label="Finished" value={formatDate(attempt.finishedAt)} />
+        {attempt.failureType && (
+          <MetadataRow label="Failure type" value={attempt.failureType} />
+        )}
+      </dl>
+      {attempt.error && <JsonBlock label="Attempt error" value={attempt.error} />}
+      {attempt.result && <JsonBlock label="Attempt result" value={attempt.result} />}
+    </li>
   )
 }

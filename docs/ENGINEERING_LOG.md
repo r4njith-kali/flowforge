@@ -36,3 +36,14 @@
   90 tests (73 control-plane, 17 worker) with the documented local Docker API
   compatibility override.
 - **Tracking:** GitHub issue #6.
+
+## 2026-10-22 — FLOW-106: Render execution outcomes in the dashboard
+
+- **Decision:** Extend the job detail client to load typed outcome and attempt
+  data from FLOW-105, rendering results as text-formatted JSON with independent
+  attempt loading/error/empty states.
+- **Rationale:** Make worker execution evidence useful to operators without
+  fabricating lifecycle events or making job controls depend on history reads.
+- **Verification:** `npm run lint`, `npm run typecheck`, `npm test` (22 tests),
+  and `npm run build` all passed in `apps/web/`.
+- **Tracking:** GitHub issue #8.

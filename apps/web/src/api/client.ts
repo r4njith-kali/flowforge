@@ -1,7 +1,9 @@
 import type {
   ApiProblem,
   CreateJobRequest,
+  JobAttempt,
   Job,
+  JobDetail,
   JobFilters,
   JobPage,
 } from '../types/job'
@@ -93,8 +95,12 @@ export function listJobs(filters: JobFilters = {}): Promise<JobPage> {
   return request(`/api/v1/jobs?${query.toString()}`)
 }
 
-export function getJob(id: string): Promise<Job> {
+export function getJob(id: string): Promise<JobDetail> {
   return request(`/api/v1/jobs/${encodeURIComponent(id)}`)
+}
+
+export function getJobAttempts(id: string): Promise<JobAttempt[]> {
+  return request(`/api/v1/jobs/${encodeURIComponent(id)}/attempts`)
 }
 
 export function createJob(

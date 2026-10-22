@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   cancelJob,
   createJob,
+  getJobAttempts,
   listJobs,
   registerAuthentication,
 } from './client'
@@ -71,6 +72,19 @@ describe('job API client', () => {
       jobType: 'demo.echo',
       payload: { message: 'hello' },
     })
+  })
+
+  it('loads attempts for a single encoded job ID', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getJobAttempts('job/id')).resolves.toEqual([])
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/jobs/job%2Fid/attempts')
   })
 
   it('distinguishes an accepted running cancellation from completed cancellation', async () => {

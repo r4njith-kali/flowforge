@@ -325,14 +325,24 @@ h1, h2, h3, p { margin-top: 0; }
 .timeline-content p { margin: 5px 0 3px; color: #88939f; font-size: 10px; line-height: 1.5; }
 .timeline-content small { color: #66717e; font: 9px var(--mono); }
 .timeline-note { margin: 0; padding: 12px 18px 15px; border-top: 1px solid var(--border-soft); }
-.language-tag, .not-exposed-tag { color: #9b90e9; border: 1px solid #38334f; border-radius: 4px; background: #201d30; padding: 4px 6px; font: 8px var(--mono); }
-.not-exposed-tag { color: #87919d; border-color: #333a43; background: #1a2027; }
+.language-tag { color: #9b90e9; border: 1px solid #38334f; border-radius: 4px; background: #201d30; padding: 4px 6px; font: 8px var(--mono); }
 .json-block { overflow-x: auto; margin: 0; padding: 17px 19px; background: #0d1218; color: #bbc3ce; font: 10px/1.7 var(--mono); }
 .json-block code { color: inherit; background: transparent; font: inherit; white-space: pre; }
-.unavailable-block { display: flex; align-items: flex-start; gap: 11px; margin: 15px; padding: 13px; border: 1px dashed #313943; border-radius: 6px; background: #12181f; }
-.unavailable-block > svg { width: 16px; height: 16px; flex: 0 0 auto; color: #8b84bd; }
-.unavailable-block strong { color: #bfc5ce; font-size: 10px; }
-.unavailable-block p { margin: 5px 0 0; color: #858f9a; font-size: 10px; line-height: 1.55; }
+.execution-empty { margin: 0; padding: 17px 19px; color: #89939f; font-size: 10px; }
+.execution-json + .execution-json { border-top: 1px solid var(--border-soft); }
+.execution-json h3 { margin: 0; padding: 12px 19px 0; color: #aeb7c2; font-size: 10px; font-weight: 600; }
+.attempt-list { display: grid; gap: 10px; margin: 0; padding: 14px; list-style: none; }
+.attempt-item { overflow: hidden; border: 1px solid #28313b; border-radius: 6px; background: #11171e; }
+.attempt-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border-bottom: 1px solid #252e38; }
+.attempt-heading strong { color: #dce1e8; font-size: 10px; }
+.attempt-status { color: #aeb7c2; font: 8px var(--mono); }
+.attempt-status-completed { color: #89d7b6; }
+.attempt-status-failed, .attempt-status-abandoned { color: #f19b91; }
+.attempt-status-retry-wait { color: #e0bd78; }
+.attempt-metadata { margin: 0; padding: 0 13px; }
+.attempt-metadata .metadata-row { padding: 8px 0; }
+.attempt-item .execution-json h3 { padding-top: 10px; }
+.attempt-item .json-block { padding: 11px 13px; }
 .metadata-list { margin: 0; padding: 0 16px; }
 .metadata-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 11px 0; border-bottom: 1px solid #202832; }
 .metadata-row:last-child { border-bottom: 0; }

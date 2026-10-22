@@ -28,6 +28,33 @@ export interface Job {
   version: number
 }
 
+export interface JobDetail extends Job {
+  result: Record<string, unknown> | null
+  error: Record<string, unknown> | null
+}
+
+export type JobAttemptStatus =
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'RETRY_WAIT'
+  | 'FAILED'
+  | 'ABANDONED'
+  | 'CANCELLED'
+
+export interface JobAttempt {
+  id: string
+  attemptNumber: number
+  workerId: string
+  status: JobAttemptStatus
+  startedAt: string
+  heartbeatAt: string
+  leaseExpiresAt: string
+  finishedAt: string | null
+  failureType: 'TRANSIENT' | 'PERMANENT' | 'WORKER_LOST' | null
+  error: Record<string, unknown> | null
+  result: Record<string, unknown> | null
+}
+
 export interface JobPage {
   items: Job[]
   page: number

@@ -191,8 +191,8 @@ export function OverviewPage() {
         )}
       </section>
       <p className="data-note">
-        Metrics reflect the current API response. Job results and attempt history
-        are not exposed by the current REST API.
+        Metrics and job execution details reflect persisted control-plane API
+        data.
       </p>
     </div>
   )

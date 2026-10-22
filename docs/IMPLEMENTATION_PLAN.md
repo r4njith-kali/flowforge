@@ -121,9 +121,9 @@ Provides API-backed overview counts, server-paginated job listing, job
 submission, polled job detail, and cancellation. It calls the versioned
 control-plane API and does not connect directly to PostgreSQL, Kafka, or Redis.
 The job detail API exposes persisted execution result and error details, and
-the attempts API exposes durable worker-attempt history. The operator UI does
-not yet render these fields and builds its timeline only from persisted
-timestamps.
+the attempts API exposes durable worker-attempt history. The operator UI
+renders these persisted outcomes and keeps its lifecycle timeline limited to
+job-level timestamps.
 
 ### Platform observability
 
@@ -447,9 +447,9 @@ updated progress documentation, and a Conventional Commit.
    submission, live detail polling, cancellation, and accessible responsive
    dark UI. Vitest and Testing Library cover API status handling, form
    validation/submission, and detail behavior. The detail timeline is limited
-   to timestamps in the current DTO; the backend exposes final execution
-   results and attempt history, but the UI does not yet render them. Retry
-   actions remain unavailable. Live backend
+   to timestamps in the current DTO; the detail page renders persisted
+   execution results, errors, and ordered attempt history. Retry actions remain
+   unavailable. Live backend
    verification and genuine screenshots are recorded in the README.
 7A. **User authentication and authorization (complete):** Keycloak OIDC
    Authorization Code + PKCE for the SPA, Spring Security JWT resource server,

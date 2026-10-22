@@ -9,11 +9,12 @@ Last updated: 2026-10-22
 | 3. Idempotent submission and outbox | Complete | Optional operation-scoped idempotency with 24-hour retention; transactional `JobCreated` outbox; PostgreSQL integration coverage. Kafka publication was added in milestone 4. |
 | 4. Scheduling and Kafka dispatch | Complete | PostgreSQL-backed `SKIP LOCKED` outbox claims, Kafka acknowledgement sequencing, scheduled eligibility, bounded retries/leases, and PostgreSQL+Kafka Testcontainers coverage. |
 | 5. Worker runtime and recovery | Complete | Independent Spring Boot Maven service; Kafka dispatch consumer, PostgreSQL-fenced attempts, leases/heartbeats, cooperative cancellation, bounded retries, and lease-expiry recovery. Verified with PostgreSQL and Kafka Testcontainers. |
-| 6. Operator UI | Complete | React/TypeScript Vite dashboard with server-side job management, live detail polling, accessible cancellation/submission, 11 passing UI/API tests, production build, and a live `demo.echo` verification. |
+| 6. Operator UI | Complete | React/TypeScript Vite dashboard with server-side job management, live detail polling, accessible cancellation/submission, persisted execution outcomes and ordered attempt history, 22 passing UI/API tests, production build, and a live `demo.echo` verification. |
 | 7A. User authentication and authorization | Complete | Full Maven/Testcontainers verification: 70 tests passed. Frontend lint, strict typecheck, 19 tests, and production build passed. Compose config and local Keycloak realm validated; live PKCE login, API ownership/role checks, authenticated operator submission, and worker completion verified. `npm audit` reported 0 known vulnerabilities; Maven vulnerability scanning and production hardening remain follow-up work. |
 | FLOW-103. Required database credentials | Complete | Both Spring services validate nonblank database credentials before database initialization; missing, blank, and unresolved-placeholder checks pass. Full Maven/Testcontainers verification: 85 tests passed. Tracked by GitHub issue #2 and PR #3. |
 | FLOW-104. Frontend OIDC environment example | Complete | Added the public OIDC authority and client ID to the frontend `.env.example`; values match existing defaults. Tracked by GitHub issue #4. |
 | FLOW-105. Job results and attempt history API | Complete | Job details expose persisted result/error and `GET /api/v1/jobs/{jobId}/attempts` returns ordered attempts under existing owner authorization. Full Maven/Testcontainers verification: 90 tests passed (73 control-plane, 17 worker). Tracked by GitHub issue #6. |
+| FLOW-106. Dashboard execution history | Complete | Typed API client and job detail page render persisted result/error and ordered worker attempts with independent loading, empty, and error states. Frontend lint, typecheck, 22 tests, and production build passed. Tracked by GitHub issue #8. |
 | 7B. Production readiness and tenant isolation | Planned | Add true tenant-scoped isolation, quotas, audit/retention policies, deployment monitoring, resilience tests, and runbooks after 7A acceptance. |
 
 ## Delivered in milestone 2
@@ -148,8 +149,8 @@ Last updated: 2026-10-22
 - Added polled job detail with actual DTO metadata and timestamp-based
   timeline, configurable 5/15/30-second refresh, confirmation-based
   cancellation, and explicit 200 / 202 / 409 handling. The dashboard does not
-  yet render execution results or attempt history; FLOW-105 adds these data to
-  the backend API. No execution events are fabricated.
+  render persisted job results and ordered worker attempt history from the
+  FLOW-105 API; no execution events are fabricated.
 - Added responsive dark UI, semantic navigation/forms, visible focus styling,
   keyboard-operable native controls, loading/empty/error states, and cleanup
   of polling timers.

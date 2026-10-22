@@ -1,6 +1,6 @@
 # Implementation Progress
 
-Last updated: 2026-10-21
+Last updated: 2026-10-22
 
 | Milestone | Status | Evidence / next acceptance checks |
 | --- | --- | --- |
@@ -13,6 +13,7 @@ Last updated: 2026-10-21
 | 7A. User authentication and authorization | Complete | Full Maven/Testcontainers verification: 70 tests passed. Frontend lint, strict typecheck, 19 tests, and production build passed. Compose config and local Keycloak realm validated; live PKCE login, API ownership/role checks, authenticated operator submission, and worker completion verified. `npm audit` reported 0 known vulnerabilities; Maven vulnerability scanning and production hardening remain follow-up work. |
 | FLOW-103. Required database credentials | Complete | Both Spring services validate nonblank database credentials before database initialization; missing, blank, and unresolved-placeholder checks pass. Full Maven/Testcontainers verification: 85 tests passed. Tracked by GitHub issue #2 and PR #3. |
 | FLOW-104. Frontend OIDC environment example | Complete | Added the public OIDC authority and client ID to the frontend `.env.example`; values match existing defaults. Tracked by GitHub issue #4. |
+| FLOW-105. Job results and attempt history API | Complete | Job details expose persisted result/error and `GET /api/v1/jobs/{jobId}/attempts` returns ordered attempts under existing owner authorization. Full Maven/Testcontainers verification: 90 tests passed (73 control-plane, 17 worker). Tracked by GitHub issue #6. |
 | 7B. Production readiness and tenant isolation | Planned | Add true tenant-scoped isolation, quotas, audit/retention policies, deployment monitoring, resilience tests, and runbooks after 7A acceptance. |
 
 ## Delivered in milestone 2
@@ -146,9 +147,9 @@ Last updated: 2026-10-21
   `Idempotency-Key`.
 - Added polled job detail with actual DTO metadata and timestamp-based
   timeline, configurable 5/15/30-second refresh, confirmation-based
-  cancellation, and explicit 200 / 202 / 409 handling. Results and attempt
-  history are marked unavailable because the current REST response does not
-  expose them. No execution events are fabricated.
+  cancellation, and explicit 200 / 202 / 409 handling. The dashboard does not
+  yet render execution results or attempt history; FLOW-105 adds these data to
+  the backend API. No execution events are fabricated.
 - Added responsive dark UI, semantic navigation/forms, visible focus styling,
   keyboard-operable native controls, loading/empty/error states, and cleanup
   of polling timers.

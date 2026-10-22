@@ -135,6 +135,65 @@ class JobManagementIntegrationTest {
     }
 
     @Test
+    void detailReturnsPersistedExecutionResultAndError() throws Exception {
+        UUID id = createOwnedJob();
+        jdbcTemplate.update("""
+                UPDATE jobs
+                SET status = 'FAILED',
+                    result = '{"message":"partial"}'::jsonb,
+                    error = '{"failureType":"PERMANENT","message":"handler rejected input"}'::jsonb
+                WHERE id = ?
+                """, id);
+
+        mockMvc.perform(get("/api/v1/jobs/{id}", id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result.message").value("partial"))
+                .andExpect(jsonPath("$.error.failureType").value("PERMANENT"))
+                .andExpect(jsonPath("$.error.message").value("handler rejected input"));
+    }
+
+    @Test
+    void attemptsAreReturnedInAscendingAttemptNumberOrder() throws Exception {
+        UUID jobId = createOwnedJob();
+        Instant startedAt = Instant.parse("2026-10-21T12:00:00Z");
+        insertAttempt(jobId, 2, "worker-b", "COMPLETED", startedAt.plusSeconds(10),
+                null, null, "{\"message\":\"done\"}");
+        insertAttempt(jobId, 1, "worker-a", "RETRY_WAIT", startedAt,
+                "TRANSIENT", "{\"message\":\"temporary\"}", null);
+
+        mockMvc.perform(get("/api/v1/jobs/{id}/attempts", jobId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].attemptNumber").value(1))
+                .andExpect(jsonPath("$[0].workerId").value("worker-a"))
+                .andExpect(jsonPath("$[0].failureType").value("TRANSIENT"))
+                .andExpect(jsonPath("$[0].error.message").value("temporary"))
+                .andExpect(jsonPath("$[1].attemptNumber").value(2))
+                .andExpect(jsonPath("$[1].workerId").value("worker-b"))
+                .andExpect(jsonPath("$[1].result.message").value("done"));
+    }
+
+    @Test
+    void attemptsForJobWithoutExecutionReturnAnEmptyList() throws Exception {
+        UUID jobId = createOwnedJob();
+
+        mockMvc.perform(get("/api/v1/jobs/{id}/attempts", jobId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    @WithMockJwt(subject = "viewer-2", role = "VIEWER")
+    void anotherOwnerCannotReadJobDetailsOrAttempts() throws Exception {
+        UUID jobId = createOwnedJob();
+
+        mockMvc.perform(get("/api/v1/jobs/{id}", jobId))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/jobs/{id}/attempts", jobId))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void createPersistsOnePendingJobCreatedOutboxEvent() throws Exception {
         var result = mockMvc.perform(post("/api/v1/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -184,6 +243,45 @@ class JobManagementIntegrationTest {
                 .andExpect(jsonPath("$.id").value(originalId));
     }
 
+    private UUID createOwnedJob() {
+        var submission = jobSubmissionService.submit(
+                new CreateJobRequest("demo.echo", Map.of("message", "hello"), null, null, null),
+                null,
+                OWNER);
+        return submission.job().getId();
+    }
+
+    private void insertAttempt(
+            UUID jobId,
+            int attemptNumber,
+            String workerId,
+            String status,
+            Instant startedAt,
+            String failureType,
+            String error,
+            String result) {
+        jdbcTemplate.update("""
+                INSERT INTO job_attempts (
+                    id, job_id, attempt_number, worker_id, fencing_token, status,
+                    started_at, heartbeat_at, lease_expires_at, finished_at,
+                    failure_type, error, result
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)
+                """,
+                UUID.randomUUID(),
+                jobId,
+                attemptNumber,
+                workerId,
+                (long) attemptNumber,
+                status,
+                Timestamp.from(startedAt),
+                Timestamp.from(startedAt.plusSeconds(1)),
+                Timestamp.from(startedAt.plusSeconds(30)),
+                Timestamp.from(startedAt.plusSeconds(5)),
+                failureType,
+                error,
+                result);
+    }
+
     @Test
     void idempotencyKeysAreIndependentAcrossValidatedUsers() {
         CreateJobRequest request = new CreateJobRequest(
@@ -219,6 +317,8 @@ class JobManagementIntegrationTest {
                 .andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.items[0].id").value(ownedJob.getId().toString()));
         mockMvc.perform(get("/api/v1/jobs/{id}", otherJob.getId()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/v1/jobs/{id}/attempts", otherJob.getId()))
                 .andExpect(status().isNotFound());
         mockMvc.perform(post("/api/v1/jobs/{id}/cancel", otherJob.getId()))
                 .andExpect(status().isNotFound());

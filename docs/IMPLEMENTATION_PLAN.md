@@ -120,9 +120,10 @@ Worker capacity is controlled independently from API capacity.
 Provides API-backed overview counts, server-paginated job listing, job
 submission, polled job detail, and cancellation. It calls the versioned
 control-plane API and does not connect directly to PostgreSQL, Kafka, or Redis.
-The current response DTO does not expose execution result data or attempt
-history; the UI states this limitation and only builds its timeline from
-timestamps actually returned by the API.
+The job detail API exposes persisted execution result and error details, and
+the attempts API exposes durable worker-attempt history. The operator UI does
+not yet render these fields and builds its timeline only from persisted
+timestamps.
 
 ### Platform observability
 
@@ -234,16 +235,23 @@ listing uses bounded offset pagination and a server-side sort-field allowlist.
 | `POST /api/v1/workflows` | Create immutable workflow version (planned) | `201` |
 | `GET /api/v1/workflows/{workflowId}` | Read workflow/version (planned) | `200` |
 | `POST /api/v1/jobs` | Create an immediate or scheduled job | `201` |
-| `GET /api/v1/jobs/{jobId}` | Read current job state, payload, and exposed timestamps | `200` |
+| `GET /api/v1/jobs/{jobId}` | Read current job state, payload, execution result/error, and timestamps | `200` |
 | `GET /api/v1/jobs` | List jobs with filters and bounded pagination | `200` |
 | `POST /api/v1/jobs/{jobId}/cancel` | Cancel an eligible job | `200` |
-| `GET /api/v1/jobs/{jobId}/attempts` | Read ordered attempt history (planned) | `200` |
+| `GET /api/v1/jobs/{jobId}/attempts` | Read ordered worker attempt history | `200` |
 
-The current `JobResponse` exposes `id`, `jobType`, `payload`, `status`,
-creation/update/schedule/start/completion/cancellation timestamps, attempt
-count and retry configuration, and optimistic-lock version. It does not expose
-the persisted worker result or attempt history; those API capabilities remain
-planned. The current create request accepts `jobType`, JSON-object `payload`, optional
+The job detail response exposes `id`, `jobType`, `payload`, `status`,
+creation/update/schedule/start/completion/cancellation timestamps, persisted
+`result` and `error` objects, attempt count and retry configuration, and
+optimistic-lock version. Job list and create responses retain their existing
+summary shape. The attempts response returns attempts in ascending
+`attemptNumber` order with worker identity, status, lease/heartbeat timestamps,
+failure classification, and persisted error/result objects. Both detail and
+attempt reads first enforce the existing ADMIN-all / OPERATOR-or-VIEWER-own
+job visibility policy; unknown and other-owner jobs return the same 404.
+FLOW-105 implemented the result/error detail fields and attempts route with
+PostgreSQL-backed authorization and ordering coverage.
+The current create request accepts `jobType`, JSON-object `payload`, optional
 `scheduledAt`, `maxAttempts` (default 5, 1–100), and `retryDelaySeconds`
 (default 0, 0–86400). It returns `201 Created`, a `Location` header, and a job
 DTO. Future schedule times produce `SCHEDULED`; absent or past times produce
@@ -439,8 +447,9 @@ updated progress documentation, and a Conventional Commit.
    submission, live detail polling, cancellation, and accessible responsive
    dark UI. Vitest and Testing Library cover API status handling, form
    validation/submission, and detail behavior. The detail timeline is limited
-   to timestamps in the current DTO; attempt history, results, and retry
-   actions remain unavailable until the API exposes them. Live backend
+   to timestamps in the current DTO; the backend exposes final execution
+   results and attempt history, but the UI does not yet render them. Retry
+   actions remain unavailable. Live backend
    verification and genuine screenshots are recorded in the README.
 7A. **User authentication and authorization (complete):** Keycloak OIDC
    Authorization Code + PKCE for the SPA, Spring Security JWT resource server,

@@ -2,8 +2,10 @@ package io.flowforge.controlplane.job.service;
 
 import io.flowforge.controlplane.job.domain.InvalidJobStateException;
 import io.flowforge.controlplane.job.domain.Job;
+import io.flowforge.controlplane.job.domain.JobAttempt;
 import io.flowforge.controlplane.job.domain.JobNotFoundException;
 import io.flowforge.controlplane.job.domain.JobStatus;
+import io.flowforge.controlplane.job.persistence.JobAttemptRepository;
 import io.flowforge.controlplane.job.persistence.JobRepository;
 import io.flowforge.controlplane.job.persistence.JobSpecifications;
 import io.flowforge.controlplane.security.JobOwner;
@@ -18,22 +20,26 @@ import java.time.Clock;
 import java.time.Instant;
 import java.sql.Timestamp;
 import java.util.Map;
+import java.util.List;
 import java.util.UUID;
 
 @Service
 public class JobService {
 
     private final JobRepository jobRepository;
+    private final JobAttemptRepository jobAttemptRepository;
     private final Clock clock;
     private final JdbcTemplate jdbcTemplate;
     private final EntityManager entityManager;
 
     public JobService(
             JobRepository jobRepository,
+            JobAttemptRepository jobAttemptRepository,
             Clock clock,
             JdbcTemplate jdbcTemplate,
             EntityManager entityManager) {
         this.jobRepository = jobRepository;
+        this.jobAttemptRepository = jobAttemptRepository;
         this.clock = clock;
         this.jdbcTemplate = jdbcTemplate;
         this.entityManager = entityManager;
@@ -73,6 +79,12 @@ public class JobService {
     @Transactional(readOnly = true)
     public Job get(UUID id, JobOwner owner, boolean administrator) {
         return findAuthorizedJob(id, owner, administrator);
+    }
+
+    @Transactional(readOnly = true)
+    public List<JobAttempt> listAttempts(UUID id, JobOwner owner, boolean administrator) {
+        findAuthorizedJob(id, owner, administrator);
+        return jobAttemptRepository.findByJobIdOrderByAttemptNumber(id);
     }
 
     @Transactional
